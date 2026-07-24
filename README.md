@@ -1,5 +1,13 @@
 # RAMOpt
 
+## Download and run
+
+[Download latest release](https://github.com/thnonl/RAMOpt/releases)
+
+1. Open link above and download RAMOpt release archive from **Assets**.
+2. Extract downloaded archive to folder where you want to keep app.
+3. Open extracted `RAMOpt` folder and run `RAMOpt.exe`.
+
 RAMOpt is native Windows memory-maintenance app. Written in Rust with Slint. No browser runtime or WebView.
 
 ## What it does
