@@ -11,7 +11,7 @@ slint::include_modules!();
 const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const RUN_VALUE: &str = "RAMOpt";
 const RELEASE_API_URL: &str = "https://api.github.com/repos/thnonl/RAMOpt/releases/latest";
-const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Settings { pub auto_clean: bool, pub interval_minutes: u32, pub hotkey: String, pub clean_temp: bool, pub trim_background_apps: bool, pub start_with_windows: bool, #[serde(default = "default_close_to_tray")] pub close_to_tray: bool, #[serde(default)] pub dark_mode: bool }
