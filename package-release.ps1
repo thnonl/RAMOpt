@@ -8,8 +8,12 @@ Push-Location $projectRoot
 try {
     cargo build --release
 
-    Remove-Item -Recurse -Force $packageDir -ErrorAction SilentlyContinue
+    # Preserve settings.json (and any other user files) across runs.
     New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
+
+    foreach ($f in 'RAMOpt.exe', 'LICENSE', 'README.md') {
+        Remove-Item -Force (Join-Path $packageDir $f) -ErrorAction SilentlyContinue
+    }
 
     Copy-Item $binary (Join-Path $packageDir 'RAMOpt.exe')
     Copy-Item (Join-Path $projectRoot 'LICENSE') $packageDir

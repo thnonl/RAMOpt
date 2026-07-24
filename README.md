@@ -1,38 +1,37 @@
 # RAMOpt
 
-RAMOpt is native Windows app for reducing memory pressure. Written in Rust with Slint. No browser runtime or WebView.
+RAMOpt is native Windows memory-maintenance app. Written in Rust with Slint. No browser runtime or WebView.
 
 ## What it does
 
-RAMOpt requests Windows to:
+During cleanup, RAMOpt:
 
-- Empty RAMOpt's own working set.
-- Trim working sets for accessible user processes.
-- Run cleanup manually, on schedule, or with global hotkey.
-- Optionally remove files from `%TEMP%` and `C:\Windows\Temp`.
-- Optionally trim background apps.
+- Requests Windows to trim working sets for processes current user can access.
+- Optionally removes files and folders from current user's `%TEMP%` and `C:\Windows\Temp`.
+- Optionally force-closes selected background apps.
+- Reports estimated working-set reduction in MB.
 
-It also provides notification-tray controls, optional Windows startup, configurable interval, and default `Ctrl+Alt+R` hotkey.
+Cleanup runs on demand, on configured schedule, or from global hotkey. Tray menu can show app, run cleanup, toggle scheduled cleanup, temp cleanup, background-app cleanup, Windows startup, or exit.
 
 ## App interface and usage
 
 ![RAMOpt main window](docs/ramopt-main-window.png)
 
-1. Keep **Enable scheduled cleanup** enabled to run RAM cleanup at configured interval. Set **Interval (minutes)** from 1 to 1440.
-2. Select global hotkey. Default **Ctrl + Alt + R** runs cleanup while RAMOpt is open or minimized to tray.
-3. Enable **Clean user temp files** to remove files from current user's `%TEMP%` directory during cleanup.
-4. Enable **Close selected background apps** only when those apps are safe to close. RAMOpt trims accessible user-process working sets either way.
-5. Enable **Start with Windows** to launch RAMOpt after sign-in. Enable **Close to tray icon** to keep it running when main window closes.
-6. Click **Save settings** after changing options. Click **Clean RAM now** for immediate cleanup. Status panel reports result.
-7. Use **Dark mode** button to switch color scheme. Tray menu provides restore, cleanup, and exit controls.
+1. **Enable scheduled cleanup** controls scheduled cleanup. Set **Interval (minutes)** from 1 to 1440. Changes save immediately.
+2. Choose global hotkey. Default **Ctrl + Alt + R** works while RAMOpt is open or minimized to tray.
+3. **Clean user temp files** also attempts `C:\Windows\Temp`; files RAMOpt cannot access are skipped.
+4. **Close selected background apps** force-closes listed processes during cleanup. Disable it when those apps must keep running.
+5. **Start with Windows** launches RAMOpt after sign-in. **Close to tray icon** hides window instead of exiting when closed.
+6. Click **Clean RAM now** for immediate cleanup. Status area shows latest result and up to five cleanup log entries.
+7. Toggle light/dark theme. Click **Default** to restore default settings.
 
 ## What it does not do
 
-- Does not overclock RAM or create physical memory.
+- Does not overclock RAM, create physical memory, or guarantee free-RAM increase.
 - Does not disable, stop, configure, or modify Windows Update.
-- Does not force protected processes to release memory.
+- Does not bypass Windows protection or access controls.
 
-Windows decides when reclaimed memory becomes available. Free RAM may not rise immediately because Windows uses standby cache to improve performance.
+Windows decides when trimmed memory becomes available. Free RAM may not rise immediately because Windows uses standby cache to improve performance.
 
 ## Requirements
 
@@ -57,47 +56,17 @@ Windows decides when reclaimed memory becomes available. Free RAM may not rise i
    cargo --version
    ```
 
-3. Build optimized executable:
+3. Build optimized executable and create the release package:
 
    ```powershell
-   cargo build --release
+   .\package-release.ps1
    ```
 
-4. Run app:
-
-   ```powershell
-   .\target\release\ramopt.exe
-   ```
-
-Output: `target\release\ramopt.exe`.
-
-## Create release package locally
-
-Run:
-
-```powershell
-.\package-release.ps1
-```
-
-Script builds release binary, then creates `release\RAMOpt\` containing:
-
-- `RAMOpt.exe`
-- `LICENSE`
-- `README.md`
-
-## GitHub releases
-
-Push version tag to create GitHub Release automatically. Workflow builds `RAMOpt.exe`, packages files as `RAMOpt-Windows-x64.zip`, uploads zip to release page, and stores raw executable as workflow artifact.
-
-```powershell
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-Can also run **Actions → Release → Run workflow**, then enter release tag such as `v0.1.0`.
+   Output: `release\RAMOpt\` containing `RAMOpt.exe`, `LICENSE`, and `README.md`. Raw binary also appears at `target\release\ramopt.exe`.
 
 ## Notes
 
+- RAMOpt allows one running instance. Starting it again restores existing window.
 - Some protected processes cannot be trimmed without elevated privileges. RAMOpt skips them.
 - Startup toggle writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\RAMOpt`.
-- Settings stored at `%APPDATA%\RAMOpt\settings.json`.
+- Settings and `ramopt.log` are stored beside `RAMOpt.exe`.

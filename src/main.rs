@@ -1,9 +1,51 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+use std::ptr;
+use windows_sys::Win32::{
+    Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS},
+    System::Threading::{CreateEventW, CreateMutexW, OpenEventW, SetEvent, EVENT_MODIFY_STATE},
+};
+
 mod app;
 
+const INSTANCE_MUTEX_NAME: &[u16] = &[
+    'R' as u16, 'A' as u16, 'M' as u16, 'O' as u16, 'p' as u16, 't' as u16, '.' as u16,
+    'S' as u16, 'i' as u16, 'n' as u16, 'g' as u16, 'l' as u16, 'e' as u16,
+    'I' as u16, 'n' as u16, 's' as u16, 't' as u16, 'a' as u16, 'n' as u16,
+    'c' as u16, 'e' as u16, 0,
+];
+const SHOW_EVENT_NAME: &[u16] = &[
+    'R' as u16, 'A' as u16, 'M' as u16, 'O' as u16, 'p' as u16, 't' as u16, '.' as u16,
+    'S' as u16, 'h' as u16, 'o' as u16, 'w' as u16, 'E' as u16, 'v' as u16, 'e' as u16,
+    'n' as u16, 't' as u16, 0,
+];
+
 fn main() {
-    app::run().expect("failed to initialize RAMOpt UI");
+    let mutex = unsafe { CreateMutexW(ptr::null(), 0, INSTANCE_MUTEX_NAME.as_ptr()) };
+    if mutex.is_null() {
+        panic!("failed to create RAMOpt instance mutex");
+    }
+    if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        let event = unsafe { OpenEventW(EVENT_MODIFY_STATE, 0, SHOW_EVENT_NAME.as_ptr()) };
+        if !event.is_null() {
+            unsafe {
+                SetEvent(event);
+                CloseHandle(event);
+            }
+        }
+        unsafe { CloseHandle(mutex); }
+        return;
+    }
+
+    let show_event = unsafe { CreateEventW(ptr::null(), 0, 0, SHOW_EVENT_NAME.as_ptr()) };
+    if show_event.is_null() {
+        panic!("failed to create RAMOpt show event");
+    }
+    app::run(show_event).expect("failed to initialize RAMOpt UI");
+    unsafe {
+        CloseHandle(show_event);
+        CloseHandle(mutex);
+    }
 }
 
 /* Obsolete native-windows-gui implementation retained only until next source cleanup.

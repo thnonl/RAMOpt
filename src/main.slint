@@ -5,22 +5,24 @@ export component MainWindow inherits Window {
     in-out property <int> interval-minutes: 15;
     in-out property <string> hotkey: "ctrl+alt+KeyR";
     in-out property <bool> clean-temp: true;
-    in-out property <bool> close-apps: false;
+    in-out property <bool> close-apps: true;
     in-out property <bool> startup: false;
     in-out property <bool> close-to-tray: true;
     in-out property <bool> dark-mode: false;
     in-out property <string> status: "Ready.";
+    in-out property <string> logs: "";
 
     init => { Palette.color-scheme = root.dark-mode ? ColorScheme.dark : ColorScheme.light; }
     changed dark-mode => { Palette.color-scheme = root.dark-mode ? ColorScheme.dark : ColorScheme.light; }
 
     callback save-settings();
+    callback restore-defaults();
     callback clean-now();
     callback hide-window();
 
     title: "RAMOpt";
     width: 580px;
-    height: 500px;
+    height: 570px;
     background: root.dark-mode ? #171b24 : #f7f8fc;
 
     VerticalLayout {
@@ -34,7 +36,33 @@ export component MainWindow inherits Window {
                 font-weight: 700;
                 color: root.dark-mode ? #f3f6fc : #182033;
             }
-            Button { text: root.dark-mode ? "Light mode" : "Dark mode"; clicked => { root.dark-mode = !root.dark-mode; root.save-settings(); } }
+            Rectangle {
+                width: 66px;
+                height: 28px;
+                border-radius: 14px;
+                background: root.dark-mode ? #40506b : #cbd3e1;
+                Text {
+                    text: root.dark-mode ? "DARK" : "LIGHT";
+                    x: root.dark-mode ? 5px : 29px;
+                    y: 0px;
+                    width: 32px;
+                    height: parent.height;
+                    color: root.dark-mode ? #dce6f7 : #34445e;
+                    font-size: 8px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                }
+                Rectangle {
+                    width: 22px;
+                    height: 22px;
+                    x: root.dark-mode ? 41px : 3px;
+                    y: 3px;
+                    border-radius: 11px;
+                    background: root.dark-mode ? #eef3fc : #ffd35a;
+                }
+                TouchArea { clicked => { root.dark-mode = !root.dark-mode; root.save-settings(); } }
+            }
         }
         Text {
             text: root.close-to-tray ? "Lightweight RAM maintenance. Closing this window keeps RAMOpt in tray." : "Lightweight RAM maintenance.";
@@ -50,7 +78,7 @@ export component MainWindow inherits Window {
             HorizontalLayout {
                 spacing: 12px;
                 Text { text: "Interval (minutes)"; vertical-alignment: center; color: root.dark-mode ? #e1e7f2 : #343d4f; }
-                SpinBox { value: root.interval-minutes; minimum: 1; maximum: 1440; edited => { root.interval-minutes = self.value; } }
+                SpinBox { value: root.interval-minutes; minimum: 1; maximum: 1440; edited => { root.interval-minutes = self.value; root.save-settings(); } }
             }
             HorizontalLayout {
                 spacing: 12px;
@@ -60,6 +88,7 @@ export component MainWindow inherits Window {
                     current-value: root.hotkey == "ctrl+alt+KeyM" ? "Ctrl + Alt + M" : root.hotkey == "ctrl+shift+KeyR" ? "Ctrl + Shift + R" : root.hotkey == "ctrl+shift+KeyM" ? "Ctrl + Shift + M" : root.hotkey == "alt+KeyR" ? "Alt + R" : root.hotkey == "alt+KeyM" ? "Alt + M" : "Ctrl + Alt + R";
                     selected => {
                         root.hotkey = self.current-value == "Ctrl + Alt + M" ? "ctrl+alt+KeyM" : self.current-value == "Ctrl + Shift + R" ? "ctrl+shift+KeyR" : self.current-value == "Ctrl + Shift + M" ? "ctrl+shift+KeyM" : self.current-value == "Alt + R" ? "alt+KeyR" : self.current-value == "Alt + M" ? "alt+KeyM" : "ctrl+alt+KeyR";
+                        root.save-settings();
                     }
                 }
             }
@@ -71,16 +100,21 @@ export component MainWindow inherits Window {
 
         HorizontalLayout {
             spacing: 12px;
-            Button { text: "Save settings"; clicked => { root.save-settings(); } }
+            Button { text: "Default"; clicked => { root.restore-defaults(); } }
             Button { text: "Clean RAM now"; primary: true; clicked => { root.clean-now(); } }
         }
 
         Rectangle {
-            height: 64px;
+            height: 94px;
             border-radius: 8px;
             background: root.dark-mode ? #252d3d : #e9eef9;
             clip: true;
-            Text { text: root.status; color: root.dark-mode ? #f5f8ff : #17233a; font-size: 15px; font-weight: 500; wrap: word-wrap; overflow: elide; vertical-alignment: center; horizontal-alignment: center; }
+            VerticalLayout {
+                padding: 8px;
+                spacing: 3px;
+                Text { text: root.status; color: root.dark-mode ? #f5f8ff : #17233a; font-size: 12px; font-weight: 500; overflow: elide; }
+                Text { text: root.logs == "" ? "No cleanup logs yet." : root.logs; color: root.dark-mode ? #cdd6e7 : #4a5870; font-size: 10px; wrap: word-wrap; overflow: elide; }
+            }
         }
     }
 }
