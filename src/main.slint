@@ -1,0 +1,86 @@
+import { Button, CheckBox, ComboBox, SpinBox, VerticalBox, Palette } from "std-widgets.slint";
+
+export component MainWindow inherits Window {
+    in-out property <bool> auto-clean: true;
+    in-out property <int> interval-minutes: 15;
+    in-out property <string> hotkey: "ctrl+alt+KeyR";
+    in-out property <bool> clean-temp: true;
+    in-out property <bool> close-apps: false;
+    in-out property <bool> startup: false;
+    in-out property <bool> close-to-tray: true;
+    in-out property <bool> dark-mode: false;
+    in-out property <string> status: "Ready.";
+
+    init => { Palette.color-scheme = root.dark-mode ? ColorScheme.dark : ColorScheme.light; }
+    changed dark-mode => { Palette.color-scheme = root.dark-mode ? ColorScheme.dark : ColorScheme.light; }
+
+    callback save-settings();
+    callback clean-now();
+    callback hide-window();
+
+    title: "RAMOpt";
+    width: 580px;
+    height: 500px;
+    background: root.dark-mode ? #171b24 : #f7f8fc;
+
+    VerticalLayout {
+        padding: 28px;
+        spacing: 14px;
+
+        HorizontalLayout {
+            Text {
+                text: "RAMOpt";
+                font-size: 30px;
+                font-weight: 700;
+                color: root.dark-mode ? #f3f6fc : #182033;
+            }
+            Button { text: root.dark-mode ? "Light mode" : "Dark mode"; clicked => { root.dark-mode = !root.dark-mode; root.save-settings(); } }
+        }
+        Text {
+            text: root.close-to-tray ? "Lightweight RAM maintenance. Closing this window keeps RAMOpt in tray." : "Lightweight RAM maintenance.";
+            color: root.dark-mode ? #b8c1d4 : #697386;
+            wrap: word-wrap;
+        }
+
+        Rectangle { height: 1px; background: root.dark-mode ? #353d4d : #dfe3eb; }
+
+        VerticalBox {
+            spacing: 10px;
+            CheckBox { text: "Enable scheduled cleanup"; checked: root.auto-clean; toggled => { root.auto-clean = self.checked; root.save-settings(); } }
+            HorizontalLayout {
+                spacing: 12px;
+                Text { text: "Interval (minutes)"; vertical-alignment: center; color: root.dark-mode ? #e1e7f2 : #343d4f; }
+                SpinBox { value: root.interval-minutes; minimum: 1; maximum: 1440; edited => { root.interval-minutes = self.value; } }
+            }
+            HorizontalLayout {
+                spacing: 12px;
+                Text { text: "Global hotkey"; vertical-alignment: center; color: root.dark-mode ? #e1e7f2 : #343d4f; }
+                ComboBox {
+                    model: ["Ctrl + Alt + R", "Ctrl + Alt + M", "Ctrl + Shift + R", "Ctrl + Shift + M", "Alt + R", "Alt + M"];
+                    current-value: root.hotkey == "ctrl+alt+KeyM" ? "Ctrl + Alt + M" : root.hotkey == "ctrl+shift+KeyR" ? "Ctrl + Shift + R" : root.hotkey == "ctrl+shift+KeyM" ? "Ctrl + Shift + M" : root.hotkey == "alt+KeyR" ? "Alt + R" : root.hotkey == "alt+KeyM" ? "Alt + M" : "Ctrl + Alt + R";
+                    selected => {
+                        root.hotkey = self.current-value == "Ctrl + Alt + M" ? "ctrl+alt+KeyM" : self.current-value == "Ctrl + Shift + R" ? "ctrl+shift+KeyR" : self.current-value == "Ctrl + Shift + M" ? "ctrl+shift+KeyM" : self.current-value == "Alt + R" ? "alt+KeyR" : self.current-value == "Alt + M" ? "alt+KeyM" : "ctrl+alt+KeyR";
+                    }
+                }
+            }
+            CheckBox { text: "Clean user temp files"; checked: root.clean-temp; toggled => { root.clean-temp = self.checked; root.save-settings(); } }
+            CheckBox { text: "Close selected background apps"; checked: root.close-apps; toggled => { root.close-apps = self.checked; root.save-settings(); } }
+            CheckBox { text: "Start with Windows"; checked: root.startup; toggled => { root.startup = self.checked; root.save-settings(); } }
+            CheckBox { text: "Close to tray icon"; checked: root.close-to-tray; toggled => { root.close-to-tray = self.checked; root.save-settings(); } }
+        }
+
+        HorizontalLayout {
+            spacing: 12px;
+            Button { text: "Save settings"; clicked => { root.save-settings(); } }
+            Button { text: "Clean RAM now"; primary: true; clicked => { root.clean-now(); } }
+        }
+
+        Rectangle {
+            height: 64px;
+            border-radius: 8px;
+            background: root.dark-mode ? #252d3d : #e9eef9;
+            clip: true;
+            Text { text: root.status; color: root.dark-mode ? #f5f8ff : #17233a; font-size: 15px; font-weight: 500; wrap: word-wrap; overflow: elide; vertical-alignment: center; horizontal-alignment: center; }
+        }
+    }
+}

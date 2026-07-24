@@ -1,0 +1,11 @@
+/target/
+/release/
+/settings.json
+*.pdb
+*.exe
+*.msi
+*.zip
+
+# Editor and local analysis state
+.vscode/
+.codegraph/
