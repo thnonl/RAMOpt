@@ -11,11 +11,12 @@ try {
     # Preserve settings.json (and any other user files) across runs.
     New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
 
-    foreach ($f in 'RAMOpt.exe', 'LICENSE', 'README.md') {
+    foreach ($f in 'RAMOpt.exe', 'RAMOpt-updater.bat', 'LICENSE', 'README.md') {
         Remove-Item -Force (Join-Path $packageDir $f) -ErrorAction SilentlyContinue
     }
 
     Copy-Item $binary (Join-Path $packageDir 'RAMOpt.exe')
+    Copy-Item (Join-Path $projectRoot 'RAMOpt-updater.bat') $packageDir
     Copy-Item (Join-Path $projectRoot 'LICENSE') $packageDir
     Copy-Item (Join-Path $projectRoot 'README.md') $packageDir
 

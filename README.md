@@ -31,7 +31,8 @@ Cleanup runs on demand, on configured schedule, or from global hotkey. Tray menu
 4. **Close selected background apps** force-closes listed processes during cleanup. Disable it when those apps must keep running.
 5. **Start with Windows** launches RAMOpt after sign-in. **Close to tray icon** hides window instead of exiting when closed.
 6. Click **Clean RAM now** for immediate cleanup. Status area shows latest result and up to five cleanup log entries.
-7. Toggle light/dark theme. Click **Default** to restore default settings.
+7. RAMOpt checks GitHub Releases at startup and every six hours. When newer version exists, **Update now** appears beside theme switch. Hover button to see version, then click it to download, replace app files, and restart RAMOpt.
+8. Toggle light/dark theme. Click **Default** to restore default settings.
 
 ## What it does not do
 

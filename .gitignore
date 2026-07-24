@@ -1,6 +1,7 @@
 /target/
 /release/
 /settings.json
+build-output.txt
 *.pdb
 *.exe
 *.msi

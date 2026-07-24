@@ -57,15 +57,25 @@ jobs:
         shell: pwsh
         run: .\package-release.ps1
 
+      - name: Verify self-contained updater package
+        shell: pwsh
+        run: |
+          $requiredFiles = 'RAMOpt.exe', 'RAMOpt-updater.bat'
+          foreach ($file in $requiredFiles) {
+            if (-not (Test-Path (Join-Path '.\release\RAMOpt' $file))) {
+              throw "Release package is missing $file"
+            }
+          }
+
       - name: Create ZIP archive
         shell: pwsh
-        run: Compress-Archive -Path .\release\RAMOpt\* -DestinationPath .\release\RAMOpt-Windows-x64.zip
+        run: Compress-Archive -Path .\release\RAMOpt\* -DestinationPath .\release\RAMOpt-Windows-x64.zip -Force
 
-      - name: Upload executable artifact
+      - name: Upload release archive artifact
         uses: actions/upload-artifact@v4
         with:
           name: RAMOpt-Windows-x64
-          path: .\release\RAMOpt\RAMOpt.exe
+          path: .\release\RAMOpt-Windows-x64.zip
           if-no-files-found: error
 
       - name: Publish GitHub Release
