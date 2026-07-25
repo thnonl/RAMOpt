@@ -63,7 +63,7 @@ fn spawn_update_checks(ui: Weak<MainWindow>, update_available: Arc<AtomicBool>) 
 fn start_update() -> Result<(), String> {
     let updater = updater_path();
     if !updater.is_file() { return Err(format!("Updater not found: {}", updater.display())); }
-    Command::new("cmd.exe").args(["/C", "start", "", &updater.to_string_lossy()]).spawn().map_err(|error| error.to_string())?;
+    Command::new("cmd.exe").creation_flags(CREATE_NO_WINDOW).args(["/C", "start", "", "/b", &updater.to_string_lossy()]).spawn().map_err(|error| error.to_string())?;
     Ok(())
 }
 
