@@ -16,10 +16,10 @@ During cleanup, RAMOpt:
 
 - Requests Windows to trim working sets for processes current user can access.
 - Optionally removes files and folders from current user's `%TEMP%` and `C:\Windows\Temp`.
-- Optionally force-closes selected background apps.
+- Optionally closes selected user applications without forced termination. Hardware drivers and vendor service processes are excluded.
 - Reports estimated working-set reduction in MB.
 
-Cleanup runs on demand, on configured schedule, or from global hotkey. Tray menu can show app, run cleanup, toggle scheduled cleanup, temp cleanup, background-app cleanup, Windows startup, or exit.
+Cleanup runs on demand, on configured schedule, or from global hotkey. Tray menu can show app, run cleanup, toggle scheduled cleanup, temp cleanup, user-app cleanup, Windows startup, or exit.
 
 ## App interface and usage
 
@@ -28,7 +28,7 @@ Cleanup runs on demand, on configured schedule, or from global hotkey. Tray menu
 1. **Enable scheduled cleanup** controls scheduled cleanup. Set **Interval (minutes)** from 1 to 1440. Changes save immediately.
 2. Choose global hotkey. Default **Ctrl + Alt + R** works while RAMOpt is open or minimized to tray.
 3. **Clean user temp files** also attempts `C:\Windows\Temp`; files RAMOpt cannot access are skipped.
-4. **Close selected background apps** force-closes listed processes during cleanup. Disable it when those apps must keep running.
+4. **Close selected user apps (safe)** is disabled by default. It closes only OneDrive, Teams, and Adobe helper apps without `/F`; it never terminates hardware drivers or vendor services.
 5. **Start with Windows** launches RAMOpt after sign-in. **Close to tray icon** hides window instead of exiting when closed.
 6. Click **Clean RAM now** for immediate cleanup. Status area shows latest result and up to five cleanup log entries.
 7. RAMOpt checks GitHub Releases at startup and every hour. When newer version exists, **Update now** appears beside theme switch. Hover button to see version, then click it to download, replace app files, and restart RAMOpt.

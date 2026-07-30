@@ -129,7 +129,7 @@ export component MainWindow inherits Window {
                 }
             }
             CheckBox { text: "Clean user temp files"; checked: root.clean-temp; toggled => { root.clean-temp = self.checked; root.save-settings(); } }
-            CheckBox { text: "Close selected background apps"; checked: root.close-apps; toggled => { root.close-apps = self.checked; root.save-settings(); } }
+            CheckBox { text: "Close selected user apps (safe)"; checked: root.close-apps; toggled => { root.close-apps = self.checked; root.save-settings(); } }
             CheckBox { text: "Start with Windows"; checked: root.startup; toggled => { root.startup = self.checked; root.save-settings(); } }
             CheckBox { text: "Close to tray icon"; checked: root.close-to-tray; toggled => { root.close-to-tray = self.checked; root.save-settings(); } }
         }
