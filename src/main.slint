@@ -25,7 +25,7 @@ export component MainWindow inherits Window {
 
     title: "RAMOpt";
     width: 580px;
-    height: 570px;
+    height: root.update-version != "" ? 646px : 570px;
     background: root.dark-mode ? #171b24 : #f7f8fc;
 
     VerticalLayout {
@@ -34,42 +34,18 @@ export component MainWindow inherits Window {
 
         HorizontalLayout {
             VerticalLayout {
-                spacing: 0px;
+                spacing: 2px;
                 Text {
                     text: "RAMOpt";
                     font-size: 30px;
                     font-weight: 700;
                     color: root.dark-mode ? #f3f6fc : #182033;
                 }
-                HorizontalLayout {
-                    spacing: 4px;
-                    Text {
-                        text: "Current: " + root.current-version;
-                        font-size: 10px;
-                        font-weight: 600;
-                        color: root.dark-mode ? #9eabc0 : #778399;
-                    }
-                    Text {
-                        visible: root.update-version != "";
-                        text: "Latest: " + root.update-version + ",";
-                        font-size: 10px;
-                        font-weight: 600;
-                        color: root.dark-mode ? #9eabc0 : #778399;
-                    }
-                    Rectangle {
-                        visible: root.update-version != "";
-                        width: 62px;
-                        height: 14px;
-                        background: #00000000;
-                        update-link := Text {
-                            text: "Update now?";
-                            font-size: 10px;
-                            font-weight: 700;
-                            color: update-area.has-hover ? #44b982 : #2d8a5c;
-                            vertical-alignment: center;
-                        }
-                        update-area := TouchArea { clicked => { root.update-now(); } }
-                    }
+                Text {
+                    text: "Installed version " + root.current-version;
+                    font-size: 11px;
+                    font-weight: 500;
+                    color: root.dark-mode ? #9eabc0 : #778399;
                 }
             }
             Rectangle {
@@ -104,6 +80,38 @@ export component MainWindow inherits Window {
             text: root.close-to-tray ? "Lightweight RAM maintenance. Closing this window keeps RAMOpt in tray." : "Lightweight RAM maintenance.";
             color: root.dark-mode ? #b8c1d4 : #697386;
             wrap: word-wrap;
+        }
+
+        Rectangle {
+            visible: root.update-version != "";
+            height: 62px;
+            border-radius: 8px;
+            background: root.dark-mode ? #1d342d : #e4f5ec;
+            border-width: 1px;
+            border-color: root.dark-mode ? #2d6b55 : #a9dcc4;
+            HorizontalLayout {
+                padding: 10px;
+                spacing: 12px;
+                VerticalLayout {
+                    spacing: 2px;
+                    Text {
+                        text: "Update available";
+                        font-size: 12px;
+                        font-weight: 700;
+                        color: root.dark-mode ? #8fe0b5 : #176b45;
+                    }
+                    Text {
+                        text: root.update-version + " is ready. You have " + root.current-version + ".";
+                        font-size: 10px;
+                        color: root.dark-mode ? #c1d8cc : #39705a;
+                    }
+                }
+                Button {
+                    text: "Install " + root.update-version;
+                    primary: true;
+                    clicked => { root.update-now(); }
+                }
+            }
         }
 
         Rectangle { height: 1px; background: root.dark-mode ? #353d4d : #dfe3eb; }
