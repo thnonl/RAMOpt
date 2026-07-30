@@ -25,7 +25,7 @@ export component MainWindow inherits Window {
 
     title: "RAMOpt";
     width: 580px;
-    height: root.update-version != "" ? 646px : 570px;
+    height: root.update-version != "" ? 666px : 590px;
     background: root.dark-mode ? #171b24 : #f7f8fc;
 
     VerticalLayout {
@@ -82,8 +82,7 @@ export component MainWindow inherits Window {
             wrap: word-wrap;
         }
 
-        Rectangle {
-            visible: root.update-version != "";
+        if root.update-version != "" : Rectangle {
             height: 62px;
             border-radius: 8px;
             background: root.dark-mode ? #1d342d : #e4f5ec;
