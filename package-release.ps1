@@ -6,7 +6,10 @@ $binary = Join-Path $projectRoot 'target\release\ramopt.exe'
 
 Push-Location $projectRoot
 try {
-    cargo build --release
+    cargo build --release --locked
+    if ($LASTEXITCODE -ne 0) {
+        throw "Release build failed with exit code $LASTEXITCODE."
+    }
 
     # Preserve settings.json (and any other user files) across runs.
     New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
