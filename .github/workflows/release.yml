@@ -78,9 +78,23 @@ jobs:
           path: .\release\RAMOpt-Windows-x64.zip
           if-no-files-found: error
 
+      - name: Generate changelog
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.release.outputs.tag }}"
+          $previousTag = git describe --tags --abbrev=0 "$tag^" 2>$null
+          $range = if ($LASTEXITCODE -eq 0) { "$previousTag..$tag" } else { $tag }
+          $commits = git log --pretty=format:"- %s (%h)" $range
+
+          @(
+            "## Changes"
+            ""
+            $commits
+          ) | Set-Content -Path .\release\CHANGELOG.md
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release.outputs.tag }}
-          generate_release_notes: true
+          body_path: .\release\CHANGELOG.md
           files: .\release\RAMOpt-Windows-x64.zip
