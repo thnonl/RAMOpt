@@ -13,6 +13,10 @@ export component MainWindow inherits Window {
     in-out property <string> update-version: "";
     in-out property <string> status: "Ready.";
     in-out property <string> logs: "";
+    in-out property <string> memory-used: "0.0";
+    in-out property <string> memory-total: "0.0";
+    in-out property <float> memory-percent: 0;
+    in-out property <bool> memory-available: false;
 
     init => { Palette.color-scheme = root.dark-mode ? ColorScheme.dark : ColorScheme.light; }
     changed dark-mode => { Palette.color-scheme = root.dark-mode ? ColorScheme.dark : ColorScheme.light; }
@@ -25,7 +29,7 @@ export component MainWindow inherits Window {
 
     title: "RAMOpt";
     width: 580px;
-    height: root.update-version != "" ? 666px : 590px;
+    height: root.update-version != "" ? 726px : 650px;
     background: root.dark-mode ? #171b24 : #f7f8fc;
 
     VerticalLayout {
@@ -80,6 +84,45 @@ export component MainWindow inherits Window {
             text: root.close-to-tray ? "Lightweight RAM maintenance. Closing this window keeps RAMOpt in tray." : "Lightweight RAM maintenance.";
             color: root.dark-mode ? #b8c1d4 : #697386;
             wrap: word-wrap;
+        }
+
+        if root.memory-available : Rectangle {
+            height: 46px;
+            border-radius: 8px;
+            background: root.dark-mode ? #252d3d : #e9eef9;
+            VerticalLayout {
+                padding: 8px;
+                spacing: 6px;
+                HorizontalLayout {
+                    Text {
+                        text: "System memory";
+                        font-size: 12px;
+                        font-weight: 700;
+                        color: root.dark-mode ? #f5f8ff : #17233a;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { }
+                    Text {
+                        text: root.memory-used + " / " + root.memory-total + " GB";
+                        font-size: 12px;
+                        font-weight: 500;
+                        color: root.dark-mode ? #8fe0b5 : #176b45;
+                        vertical-alignment: center;
+                        horizontal-alignment: right;
+                    }
+                }
+                Rectangle {
+                    height: 6px;
+                    border-radius: 3px;
+                    background: root.dark-mode ? #3a4356 : #d3d9e6;
+                    Rectangle {
+                        width: parent.width * min(root.memory-percent, 1.0);
+                        height: 6px;
+                        border-radius: 3px;
+                        background: root.memory-percent > 0.9 ? #e5534b : root.memory-percent > 0.7 ? #d9a13b : #3aa76d;
+                    }
+                }
+            }
         }
 
         if root.update-version != "" : Rectangle {

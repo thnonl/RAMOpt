@@ -4,7 +4,7 @@ use slint::{ComponentHandle, Weak};
 use std::{fs, os::windows::process::CommandExt, path::PathBuf, process::Command, sync::{atomic::{AtomicBool, Ordering}, mpsc::{self, Receiver, Sender}, Arc, Mutex}, thread, time::Duration};
 use tray_icon::{menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem}, Icon, TrayIconBuilder, TrayIconEvent};
 use winreg::{enums::HKEY_CURRENT_USER, RegKey};
-use windows_sys::Win32::{Foundation::{HANDLE, HWND, RECT, WAIT_OBJECT_0}, System::{LibraryLoader::GetModuleHandleW, Threading::WaitForSingleObject}, UI::WindowsAndMessaging::{DispatchMessageW, GetSystemMetrics, GetWindowRect, LoadImageW, MSG, PeekMessageW, PM_REMOVE, SendMessageW, SetWindowPos, SWP_NOSIZE, SWP_NOZORDER, SM_CXSCREEN, SM_CYSCREEN, TranslateMessage, IMAGE_ICON, LR_DEFAULTSIZE, WM_SETICON, ICON_SMALL, ICON_BIG}};
+use windows_sys::Win32::{Foundation::{HANDLE, HWND, RECT, WAIT_OBJECT_0}, System::{LibraryLoader::GetModuleHandleW, SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX}, Threading::WaitForSingleObject}, UI::WindowsAndMessaging::{DispatchMessageW, GetSystemMetrics, GetWindowRect, LoadImageW, MSG, PeekMessageW, PM_REMOVE, SendMessageW, SetWindowPos, SWP_NOSIZE, SWP_NOZORDER, SM_CXSCREEN, SM_CYSCREEN, TranslateMessage, IMAGE_ICON, LR_DEFAULTSIZE, WM_SETICON, ICON_SMALL, ICON_BIG}};
 
 slint::include_modules!();
 
@@ -43,6 +43,17 @@ fn close_background_apps() -> u32 {
     names.iter().filter(|name| Command::new("taskkill.exe").creation_flags(CREATE_NO_WINDOW).args(["/IM", name]).output().map(|output| output.status.success()).unwrap_or(false)).count() as u32
 }
 pub fn clean_memory(settings: &Settings) -> String { let freed_mb = trim_working_sets(); if settings.clean_temp { clear_temp(); } let closed = if settings.trim_background_apps { close_background_apps() } else { 0 }; format!("Memory cleaned: {freed_mb:.1} MB; closed {closed} user apps") }
+
+fn memory_status() -> (u64, u64) {
+    unsafe {
+        let mut status: MEMORYSTATUSEX = std::mem::zeroed();
+        status.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+        if GlobalMemoryStatusEx(&mut status) == 0 { return (0, 0); }
+        (status.ullTotalPhys - status.ullAvailPhys, status.ullTotalPhys)
+    }
+}
+fn gb(bytes: u64) -> String { format!("{:.1}", bytes as f64 / (1024.0 * 1024.0 * 1024.0)) }
+fn memory_tooltip(used: u64, total: u64) -> String { let percent = if total > 0 { used as f64 / total as f64 } else { 0.0 }; format!("RAMOpt - RAM: {} / {} GB ({:.0}%)", gb(used), gb(total), percent * 100.0) }
 
 fn version_is_newer(tag: &str) -> bool {
     fn parts(version: &str) -> Option<Vec<u32>> { version.trim_start_matches('v').split('.').map(str::parse).collect::<Result<_, _>>().ok() }
@@ -117,9 +128,18 @@ fn push_log(ui: &MainWindow, message: &str) { let logs = ui.get_logs(); let line
 
 pub fn run(show_event: HANDLE) -> Result<(), slint::PlatformError> {
     let state = Arc::new(Mutex::new(load_settings())); let ui = MainWindow::new()?; sync_ui(&ui, &state.lock().unwrap()); ui.set_current_version(format!("v{}", env!("CARGO_PKG_VERSION")).into());
-    let (menu, tray) = TrayMenu::new(&state.lock().unwrap()); let update_menu = menu.clone(); let _tray = TrayIconBuilder::new().with_menu(Box::new(menu)).with_tooltip("RAMOpt").with_icon(icon()).build().expect("failed to create tray icon");
+    let (menu, tray) = TrayMenu::new(&state.lock().unwrap()); let update_menu = menu.clone(); let tray_icon = TrayIconBuilder::new().with_menu(Box::new(menu)).with_tooltip("RAMOpt").with_icon(icon()).build().expect("failed to create tray icon");
+    let (used, total) = memory_status(); ui.set_memory_used(gb(used).into()); ui.set_memory_total(gb(total).into()); ui.set_memory_percent(if total > 0 { used as f32 / total as f32 } else { 0.0 }); ui.set_memory_available(true); let _ = tray_icon.set_tooltip(Some(memory_tooltip(used, total)));
     let hotkey_updates = spawn_hotkey(ui.as_weak(), state.clone());
     spawn_show_event_listener(ui.as_weak(), show_event);
+    let memory_tray = tray_icon.clone(); let memory_ui = ui.as_weak();
+    let memory_timer = slint::Timer::default();
+    memory_timer.start(slint::TimerMode::Repeated, Duration::from_millis(2000), move || {
+        let (used, total) = memory_status();
+        let percent = if total > 0 { used as f32 / total as f32 } else { 0.0 };
+        if let Some(ui) = memory_ui.upgrade() { ui.set_memory_used(gb(used).into()); ui.set_memory_total(gb(total).into()); ui.set_memory_percent(percent); }
+        let _ = memory_tray.set_tooltip(Some(memory_tooltip(used, total)));
+    });
     let weak = ui.as_weak(); let save_state = state.clone(); let save_hotkey_updates = hotkey_updates.clone(); let save_tray = tray.clone(); ui.on_save_settings(move || if let Some(ui) = weak.upgrade() { persist(&ui, &save_state, &save_hotkey_updates); save_tray.sync_checks(&save_state.lock().unwrap()); });
     let weak = ui.as_weak(); let default_state = state.clone(); let default_hotkey_updates = hotkey_updates.clone(); let default_tray = tray.clone(); ui.on_restore_defaults(move || if let Some(ui) = weak.upgrade() { let settings = Settings::default(); if let Err(error) = set_startup(false) { ui.set_status(format!("Startup setting failed: {error}").into()); return; } let _ = default_hotkey_updates.send(settings.hotkey.clone()); save_settings(&settings); *default_state.lock().unwrap() = settings.clone(); default_tray.sync_checks(&settings); sync_ui(&ui, &settings); });
     let weak = ui.as_weak(); let clean_state = state.clone(); ui.on_clean_now(move || { if let Some(ui) = weak.upgrade() { let settings = read_ui(&ui); *clean_state.lock().unwrap() = settings.clone(); ui.set_status("Cleaning RAM...".into()); let weak = ui.as_weak(); thread::spawn(move || { let status = clean_memory(&settings); log(&status); let _ = slint::invoke_from_event_loop(move || if let Some(ui) = weak.upgrade() { ui.set_status(status.clone().into()); push_log(&ui, &status); }); }); } });
