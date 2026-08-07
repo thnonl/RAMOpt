@@ -118,6 +118,7 @@ export component MainWindow inherits Window {
                     Rectangle {
                         width: parent.width * min(root.memory-percent, 1.0);
                         height: 6px;
+                        x: 0px;
                         border-radius: 3px;
                         background: root.memory-percent > 0.9 ? #e5534b : root.memory-percent > 0.7 ? #d9a13b : #3aa76d;
                     }
