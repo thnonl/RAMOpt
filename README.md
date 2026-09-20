@@ -14,10 +14,11 @@ RAMOpt is native Windows memory-maintenance app. Written in Rust with Slint. No 
 
 During cleanup, RAMOpt:
 
-- Requests Windows to trim working sets for processes current user can access.
-- Optionally removes files and folders from current user's `%TEMP%` and `C:\Windows\Temp`.
+- Requests Windows to trim working sets for processes current user can access, excluding RAMOpt itself.
+- Measures system RAM change before/after cleanup instead of querying every process's memory twice.
+- Optionally removes stale regular files older than 24 hours from current user's `%TEMP%`.
 - Optionally closes selected user applications without forced termination. Hardware drivers and vendor service processes are excluded.
-- Reports estimated working-set reduction in MB.
+- Reports system RAM delta, trimmed/skipped process counts, temp files removed, and apps closed.
 
 Cleanup runs on demand, on configured schedule, or from global hotkey. Tray menu can show app, run cleanup, toggle scheduled cleanup, temp cleanup, user-app cleanup, Windows startup, or exit.
 
@@ -25,9 +26,9 @@ Cleanup runs on demand, on configured schedule, or from global hotkey. Tray menu
 
 ![RAMOpt main window](docs/ramopt-main-window.png)
 
-1. **Enable scheduled cleanup** controls scheduled cleanup. Set **Interval (minutes)** from 1 to 1440. Changes save immediately.
+1. **Enable scheduled cleanup** controls scheduled cleanup. Set **Interval (minutes)** from 1 to 1440. Scheduled cleanup runs only when RAM usage is at least 80% and has a 60-second cooldown. Changes save immediately.
 2. Choose global hotkey. Default **Ctrl + Alt + R** works while RAMOpt is open or minimized to tray.
-3. **Clean user temp files** removes user `%TEMP%` entries older than 24 hours; symbolic links and newer/in-use entries are skipped.
+3. **Clean user temp files** removes user `%TEMP%` regular files older than 24 hours; directories, symbolic links, and newer/in-use entries are skipped.
 4. **Close selected user apps (safe)** is disabled by default. It sends a graceful close request only to matching processes owned by current user: OneDrive, Teams, and Adobe helper apps. It never force-terminates hardware drivers or vendor services.
 5. **Start with Windows** launches RAMOpt after sign-in. **Close to tray icon** hides window instead of exiting when closed.
 6. Click **Clean RAM now** for immediate cleanup. Status area shows latest result and up to five cleanup log entries.
