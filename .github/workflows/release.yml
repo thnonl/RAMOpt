@@ -15,7 +15,32 @@ permissions:
   contents: write
 
 jobs:
+  quality:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Cache Cargo files
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Lint
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --locked
+
   build-and-release:
+    needs: quality
     runs-on: windows-latest
 
     steps:
@@ -27,23 +52,42 @@ jobs:
       - name: Set release tag
         id: release
         shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          $tag = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ inputs.tag }}" } else { "${{ github.ref_name }}" }
+          $tag = if ($env:EVENT_NAME -eq "workflow_dispatch") { $env:INPUT_TAG } else { $env:REF_NAME }
+          if ($tag -notmatch '^v\d+\.\d+\.\d+$') {
+            throw "Invalid release tag '$tag'. Expected format vX.Y.Z."
+          }
+          $version = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value
+          if ($tag -ne "v$version") {
+            throw "Tag $tag does not match checked-out Cargo.toml version v$version."
+          }
           "tag=$tag" >> $env:GITHUB_OUTPUT
 
       - name: Create tag for manual release
         if: github.event_name == 'workflow_dispatch'
         shell: pwsh
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
         run: |
-          $tag = "${{ steps.release.outputs.tag }}"
+          $tag = $env:TAG
           if (git ls-remote --exit-code --tags origin "refs/tags/$tag") {
             Write-Host "Tag $tag already exists."
             exit 0
           }
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a $tag -m "Release $tag"
-          git push origin $tag
+          git tag -a "$tag" -m "Release $tag"
+          git push origin "$tag"
+
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+          fetch-depth: 0
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -53,6 +97,16 @@ jobs:
       - name: Cache Cargo files
         uses: Swatinem/rust-cache@v2
 
+      - name: Verify tag matches Cargo version
+        shell: pwsh
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value
+          if ($env:TAG -ne "v$version") {
+            throw "Tag $env:TAG does not match Cargo.toml version v$version."
+          }
+
       - name: Build release package
         shell: pwsh
         run: .\package-release.ps1
@@ -60,28 +114,25 @@ jobs:
       - name: Verify self-contained updater package
         shell: pwsh
         run: |
-          $requiredFiles = 'RAMOpt.exe', 'RAMOpt-updater.bat'
+          $requiredFiles = 'RAMOpt.exe', 'RAMOpt-updater.bat', 'README.md'
           foreach ($file in $requiredFiles) {
             if (-not (Test-Path (Join-Path '.\release\RAMOpt' $file))) {
               throw "Release package is missing $file"
             }
           }
-
-      - name: Create ZIP archive
-        shell: pwsh
-        run: Compress-Archive -Path .\release\RAMOpt\* -DestinationPath .\release\RAMOpt-Windows-x64.zip -Force
-
-      - name: Upload release archive artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: RAMOpt-Windows-x64
-          path: .\release\RAMOpt-Windows-x64.zip
-          if-no-files-found: error
+          if (-not (Test-Path '.\release\SHA256SUMS.txt')) {
+            throw 'Release output is missing SHA256SUMS.txt'
+          }
+          if (-not (Test-Path '.\release\RAMOpt-Windows-x64.zip')) {
+            throw 'Release output is missing RAMOpt-Windows-x64.zip'
+          }
 
       - name: Generate changelog
         shell: pwsh
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
         run: |
-          $tag = "${{ steps.release.outputs.tag }}"
+          $tag = $env:TAG
           $previousTag = git describe --tags --abbrev=0 "$tag^" 2>$null
           $range = if ($LASTEXITCODE -eq 0) { "$previousTag..$tag" } else { $tag }
           $commits = git log --pretty=format:"- %s (%h)" $range
@@ -92,9 +143,20 @@ jobs:
             $commits
           ) | Set-Content -Path .\release\CHANGELOG.md
 
+      - name: Upload release archive artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RAMOpt-Windows-x64
+          path: |
+            .\release\RAMOpt-Windows-x64.zip
+            .\release\SHA256SUMS.txt
+          if-no-files-found: error
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release.outputs.tag }}
           body_path: .\release\CHANGELOG.md
-          files: .\release\RAMOpt-Windows-x64.zip
+          files: |
+            .\release\RAMOpt-Windows-x64.zip
+            .\release\SHA256SUMS.txt

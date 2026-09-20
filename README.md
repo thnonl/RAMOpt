@@ -8,7 +8,7 @@
 2. Extract downloaded archive to folder where you want to keep app.
 3. Open extracted `RAMOpt` folder and run `RAMOpt.exe`.
 
-RAMOpt is native Windows memory-maintenance app. Written in Rust with Slint. No browser runtime or WebView.
+RAMOpt is native Windows memory-maintenance app. Written in Rust with Slint. No browser runtime or WebView. Cleanup excludes RAMOpt itself and runs at most one cleanup operation at a time.
 
 ## What it does
 
@@ -27,8 +27,8 @@ Cleanup runs on demand, on configured schedule, or from global hotkey. Tray menu
 
 1. **Enable scheduled cleanup** controls scheduled cleanup. Set **Interval (minutes)** from 1 to 1440. Changes save immediately.
 2. Choose global hotkey. Default **Ctrl + Alt + R** works while RAMOpt is open or minimized to tray.
-3. **Clean user temp files** also attempts `C:\Windows\Temp`; files RAMOpt cannot access are skipped.
-4. **Close selected user apps (safe)** is disabled by default. It closes only OneDrive, Teams, and Adobe helper apps without `/F`; it never terminates hardware drivers or vendor services.
+3. **Clean user temp files** removes user `%TEMP%` entries older than 24 hours; symbolic links and newer/in-use entries are skipped.
+4. **Close selected user apps (safe)** is disabled by default. It sends a graceful close request only to matching processes owned by current user: OneDrive, Teams, and Adobe helper apps. It never force-terminates hardware drivers or vendor services.
 5. **Start with Windows** launches RAMOpt after sign-in. **Close to tray icon** hides window instead of exiting when closed.
 6. Click **Clean RAM now** for immediate cleanup. Status area shows latest result and up to five cleanup log entries.
 7. RAMOpt checks GitHub Releases at startup and every hour. When newer version exists, **Update now** appears beside theme switch. Hover button to see version, then click it to download, replace app files, and restart RAMOpt.
@@ -71,11 +71,13 @@ Windows decides when trimmed memory becomes available. Free RAM may not rise imm
    .\package-release.ps1
    ```
 
-   Output: `release\RAMOpt\` containing `RAMOpt.exe`, `LICENSE`, and `README.md`. Raw binary also appears at `target\release\ramopt.exe`.
+   Output: `release\RAMOpt\` containing `RAMOpt.exe`, `RAMOpt-updater.bat`, `LICENSE`, and `README.md`; plus `release\RAMOpt-Windows-x64.zip` and `release\SHA256SUMS.txt`. Raw binary also appears at `target\release\ramopt.exe`.
 
 ## Notes
 
 - RAMOpt allows one running instance. Starting it again restores existing window.
 - Some protected processes cannot be trimmed without elevated privileges. RAMOpt skips them.
 - Startup toggle writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\RAMOpt`.
-- Settings and `ramopt.log` are stored beside `RAMOpt.exe`.
+- Settings and `ramopt.log` are stored in `%LOCALAPPDATA%\RAMOpt`. An existing `settings.json` beside `RAMOpt.exe` is migrated on first launch.
+- Cleanup trims working sets for other processes only; RAMOpt never trims its own working set.
+- The updater verifies a `SHA256SUMS.txt` checksum before replacing files, and restarts the previous install if the update fails.

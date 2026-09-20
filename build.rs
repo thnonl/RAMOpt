@@ -5,7 +5,12 @@ fn main() {
         let mut resource = winres::WindowsResource::new();
         resource.set_icon("assets/ramopt.ico");
         resource.set("ProductName", "RAMOpt");
-        resource.set("FileDescription", "RAMOpt - lightweight Windows RAM cleanup");
-        resource.compile().expect("failed to compile Windows resources");
+        resource.set(
+            "FileDescription",
+            "RAMOpt - lightweight Windows RAM cleanup",
+        );
+        resource
+            .compile()
+            .expect("failed to compile Windows resources");
     }
 }
