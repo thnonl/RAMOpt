@@ -20,16 +20,12 @@ use tray_icon::{
     menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem},
 };
 use windows_sys::Win32::{
-    Foundation::{CloseHandle, ERROR_FILE_NOT_FOUND, HANDLE, HWND, RECT, WAIT_OBJECT_0},
+    Foundation::{ERROR_FILE_NOT_FOUND, HANDLE, HWND, RECT, WAIT_OBJECT_0},
     Storage::FileSystem::{MOVEFILE_REPLACE_EXISTING, MoveFileExW},
     System::{
         LibraryLoader::GetModuleHandleW,
-        ProcessStatus::{K32EmptyWorkingSet, K32EnumProcesses},
         SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX},
-        Threading::{
-            GetCurrentProcessId, OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_SET_QUOTA,
-            WaitForSingleObject,
-        },
+        Threading::WaitForSingleObject,
     },
     UI::WindowsAndMessaging::{
         DispatchMessageW, GetSystemMetrics, GetWindowRect, ICON_BIG, ICON_SMALL, IMAGE_ICON,
@@ -47,15 +43,11 @@ const RUN_VALUE: &str = "RAMOpt";
 const RELEASE_API_URL: &str = "https://api.github.com/repos/thnonl/RAMOpt/releases/latest";
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(20);
-const TEMP_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 const LOG_ROTATE_BYTES: u64 = 2 * 1024 * 1024;
-const SCHEDULED_MEMORY_THRESHOLD: f64 = 0.80;
-const CLEANUP_COOLDOWN: Duration = Duration::from_secs(60);
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 static LOG_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static SETTINGS_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-static LAST_CLEANUP: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
 static UPDATE_STARTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -252,16 +244,11 @@ fn clear_temp_folder(folder: &Path) -> u64 {
         .filter_map(|entry| {
             let path = entry.path();
             let metadata = fs::symlink_metadata(&path).ok()?;
-            if metadata.file_type().is_symlink() {
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
                 return None;
             }
             let age = metadata.modified().ok()?.elapsed().ok()?;
-            if age < TEMP_RETENTION {
-                return None;
-            }
-            // Do not recursively remove directories: a stale directory can
-            // still contain files that another process created recently.
-            if !metadata.is_file() {
+            if age < Duration::from_secs(24 * 60 * 60) {
                 return None;
             }
             fs::remove_file(path).ok()
@@ -310,58 +297,20 @@ fn command_output_with_timeout(mut command: Command, timeout: Duration) -> Resul
     }
 }
 
-fn process_ids() -> Vec<u32> {
-    let mut capacity = 1024usize;
-    loop {
-        let mut ids = vec![0u32; capacity];
-        let mut bytes = 0u32;
-        let success = unsafe {
-            K32EnumProcesses(
-                ids.as_mut_ptr(),
-                (ids.len() * std::mem::size_of::<u32>()) as u32,
-                &mut bytes,
-            )
-        };
-        if success == 0 {
-            return Vec::new();
-        }
-        let count = bytes as usize / std::mem::size_of::<u32>();
-        if count < ids.len() - 1 {
-            ids.truncate(count);
-            return ids;
-        }
-        capacity *= 2;
-        if capacity > 65_536 {
-            ids.truncate(count.min(ids.len()));
-            return ids;
-        }
-    }
-}
-
-fn trim_working_sets() -> (u32, u32) {
-    let current_pid = unsafe { GetCurrentProcessId() };
-    let mut trimmed_processes = 0;
-    let mut skipped_processes = 0;
-    for pid in process_ids() {
-        if pid == current_pid || pid == 0 {
-            continue;
-        }
-        let handle = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_SET_QUOTA, 0, pid) };
-        if handle.is_null() {
-            skipped_processes += 1;
-            continue;
-        }
-        let emptied = unsafe { K32EmptyWorkingSet(handle) } != 0;
-        unsafe {
-            CloseHandle(handle);
-        }
-        if emptied {
-            trimmed_processes += 1;
-        } else {
-            skipped_processes += 1;
-        }
-    }
-    (trimmed_processes, skipped_processes)
+fn trim_working_sets() -> f64 {
+    let script = "$ErrorActionPreference='SilentlyContinue'; $before=(Get-Process | Measure-Object -Property WorkingSet64 -Sum).Sum; Get-Process | ForEach-Object { try { $_.MinWorkingSet=$_.MinWorkingSet } catch {} }; $after=(Get-Process | Measure-Object -Property WorkingSet64 -Sum).Sum; [math]::Max(0, ($before-$after)/1MB)";
+    let mut command = Command::new(system_binary(r"WindowsPowerShell\v1.0\powershell.exe"));
+    command.creation_flags(CREATE_NO_WINDOW).args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        script,
+    ]);
+    command_output_with_timeout(command, COMMAND_TIMEOUT)
+        .ok()
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .and_then(|text| text.trim().replace(',', ".").parse().ok())
+        .unwrap_or(0.0)
 }
 
 fn close_background_apps() -> u32 {
@@ -381,19 +330,16 @@ fn close_background_apps() -> u32 {
 }
 
 pub fn clean_memory(settings: &Settings) -> String {
-    let (before_used, _) = memory_status();
-    let (trimmed_processes, skipped_processes) = trim_working_sets();
-    let removed_temp_items = if settings.clean_temp { clear_temp() } else { 0 };
-    let closed_apps = if settings.trim_background_apps {
+    let freed_mb = trim_working_sets();
+    if settings.clean_temp {
+        clear_temp();
+    }
+    let closed = if settings.trim_background_apps {
         close_background_apps()
     } else {
         0
     };
-    let (after_used, _) = memory_status();
-    let released_mb = before_used.saturating_sub(after_used) as f64 / (1024.0 * 1024.0);
-    format!(
-        "Memory cleaned: {released_mb:.1} MB system delta; trimmed {trimmed_processes} processes; skipped {skipped_processes}; removed {removed_temp_items} temp items; closed {closed_apps} user apps"
-    )
+    format!("Memory cleaned: {freed_mb:.1} MB; closed {closed} user apps")
 }
 
 fn memory_status() -> (u64, u64) {
@@ -759,28 +705,13 @@ where
 /// Runs one cleanup at a time. The single-flight flag is released by the worker,
 /// so the cleanup thread is intentionally detached: shutdown must never block on
 /// system-wide process enumeration or helper-process timeouts.
-fn start_cleanup(
-    ui: Weak<MainWindow>,
-    settings: Settings,
-    running: Arc<AtomicBool>,
-    scheduled: bool,
-) {
+fn start_cleanup(ui: Weak<MainWindow>, settings: Settings, running: Arc<AtomicBool>) {
     if running
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .is_err()
     {
         invoke_ui(&ui, |ui| ui.set_status("Cleanup already running.".into()));
         return;
-    }
-    if scheduled {
-        let now = Instant::now();
-        let last = LAST_CLEANUP.get_or_init(|| Mutex::new(None));
-        let mut last_guard = lock_or_recover(last);
-        if last_guard.is_some_and(|previous| now.duration_since(previous) < CLEANUP_COOLDOWN) {
-            running.store(false, Ordering::Release);
-            return;
-        }
-        *last_guard = Some(now);
     }
     let callback_ui = ui.clone();
     thread::spawn(move || {
@@ -857,7 +788,7 @@ fn spawn_tray_events(
                 invoke_ui(&ui, |ui| show_window(&ui, "tray menu"));
             } else if event.id == ids.2 {
                 let settings = lock_or_recover(&state).clone();
-                start_cleanup(ui.clone(), settings, cleanup_running.clone(), false);
+                start_cleanup(ui.clone(), settings, cleanup_running.clone());
             } else if event.id == ids.7 {
                 shutdown.request();
                 let _ = slint::quit_event_loop();
@@ -928,12 +859,8 @@ fn spawn_timer(
                 break;
             }
             let settings = lock_or_recover(&state).clone();
-            let (used, total) = memory_status();
-            if settings.auto_clean
-                && total > 0
-                && used as f64 / total as f64 >= SCHEDULED_MEMORY_THRESHOLD
-            {
-                start_cleanup(ui.clone(), settings, cleanup_running.clone(), true);
+            if settings.auto_clean {
+                start_cleanup(ui.clone(), settings, cleanup_running.clone());
             }
         }
     })
@@ -997,7 +924,7 @@ fn spawn_hotkey(
                 if event.state == HotKeyState::Pressed {
                     log("Hotkey pressed. Starting manual cleanup.");
                     let settings = lock_or_recover(&state).clone();
-                    start_cleanup(ui.clone(), settings, cleanup_running.clone(), false);
+                    start_cleanup(ui.clone(), settings, cleanup_running.clone());
                 }
             }
         }
@@ -1111,7 +1038,7 @@ pub fn run(show_event: HANDLE) -> Result<(), String> {
             let settings = read_ui(&ui);
             *lock_or_recover(&clean_state) = settings.clone();
             ui.set_status("Cleaning RAM...".into());
-            start_cleanup(ui.as_weak(), settings, clean_running.clone(), false);
+            start_cleanup(ui.as_weak(), settings, clean_running.clone());
         }
     });
 
