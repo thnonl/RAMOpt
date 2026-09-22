@@ -6,8 +6,19 @@ $binary = Join-Path $projectRoot 'target\release\ramopt.exe'
 
 Push-Location $projectRoot
 try {
-    cargo build --release --locked
-    if ($LASTEXITCODE -ne 0) {
+    $previousManifestFlag = [Environment]::GetEnvironmentVariable('RAMOPT_EMBED_ADMIN_MANIFEST', 'Process')
+    $env:RAMOPT_EMBED_ADMIN_MANIFEST = '1'
+    try {
+        cargo build --release --locked
+        $buildExitCode = $LASTEXITCODE
+    } finally {
+        if ($null -eq $previousManifestFlag) {
+            Remove-Item Env:RAMOPT_EMBED_ADMIN_MANIFEST -ErrorAction SilentlyContinue
+        } else {
+            $env:RAMOPT_EMBED_ADMIN_MANIFEST = $previousManifestFlag
+        }
+    }
+    if ($buildExitCode -ne 0) {
         throw "Release build failed with exit code $LASTEXITCODE."
     }
 
