@@ -8,11 +8,11 @@
 2. Extract downloaded archive to folder where you want to keep app.
 3. Open extracted `RAMOpt` folder and run `RAMOpt.exe`.
 
-RAMOpt is native Windows memory-maintenance app. Written in Rust with Slint. No browser runtime or WebView. Cleanup runs at most one cleanup operation at a time.
+RAMOpt is a Windows memory-maintenance app built with Tauri v2, Rust, and a local Vite frontend. Cleanup runs at most one operation at a time.
 
 ## What it does
 
-During cleanup, RAMOpt runs three backend optimization phases without changing the existing UI:
+During cleanup, RAMOpt runs three backend optimization phases:
 
 - **Phase 1:** measures physical memory and requests a system working-set trim; Windows may include RAMOpt and other eligible processes.
 - **Phase 2:** trims system file cache, flushes modified pages, and purges the standby list.
@@ -22,20 +22,24 @@ During cleanup, RAMOpt runs three backend optimization phases without changing t
 - Optionally closes selected user applications gracefully and force-cleans only narrowly identified orphan helper processes. Hardware drivers, security processes, network processes, active application trees, and running service-owned processes are excluded.
 - Reports estimated physical-memory delta, successful/skipped area counts, and orphan-process cleanup count. The delta is system-wide and can include normal Windows workload changes.
 
-Cleanup runs on demand, on configured schedule, or from global hotkey. Tray menu can show app, run cleanup, toggle scheduled cleanup, temp cleanup, user-app cleanup, Windows startup, or exit.
+Cleanup runs on demand, on configured schedule, or from global hotkey. Tray menu can show the app, open App settings, run cleanup, toggle scheduled cleanup, temp cleanup, background-app cleanup, Windows startup, or exit.
 
 ## App interface and usage
 
 ![RAMOpt main window](docs/ramopt-main-window.png)
 
-1. **Enable scheduled cleanup** controls scheduled cleanup and is disabled by default. Set **Interval (minutes)** from 1 to 1440. Changes save immediately.
-2. Choose global hotkey. Default **Ctrl + Alt + R** works while RAMOpt is open or minimized to tray.
-3. **Clean user temp files** also attempts `C:\Windows\Temp`; files RAMOpt cannot access are skipped.
-4. **Close selected user apps (safe)** is disabled by default. It sends graceful close requests to matching processes in the current user session, including OneDrive, Teams, and Adobe helper apps. It force-cleans only stale, parentless, childless, network-idle helper processes that match exact allowlisted paths and command lines. It skips active application trees, running service-owned processes, hardware drivers, security/network processes, and ambiguous processes.
-5. **Start with Windows** launches RAMOpt after sign-in. **Close to tray icon** hides window instead of exiting when closed.
-6. Click **Clean RAM now** for immediate cleanup. Status area shows latest result and up to five cleanup log entries.
-7. RAMOpt checks GitHub Releases at startup and every hour. When newer version exists, **Update now** appears beside theme switch. Hover button to see version, then click it to download, replace app files, and restart RAMOpt.
-8. Toggle light/dark theme. Click **Default** to restore default settings.
+1. **Automatic cleanup** offers one mode at a time: **Off**, **Scheduled** (cleans every 1–1440 minutes) or **RAM high** (checks every minute and cleans while usage is at or above the threshold, 1–100%, default 75%). Only the settings of the selected mode are shown, and the window keeps the same height in every mode.
+2. **Clean temp files** removes stale files from the user temp folder and also attempts `C:\Windows\Temp`; files RAMOpt cannot access are skipped.
+3. **Close background apps** is disabled by default. It sends graceful close requests to matching processes in the current user session, including OneDrive, Teams, and Adobe helper apps. It force-cleans only stale, parentless, childless, network-idle helper processes that match exact allowlisted paths and command lines. It skips active application trees, running service-owned processes, hardware drivers, security/network processes, and ambiguous processes.
+4. **Quick-clean hotkey** (default **Ctrl + Alt + R**) runs a cleanup from any app while RAMOpt is running, including when it is hidden in the tray. If another program already owns the hotkey, RAMOpt reports it once and retries every 10 seconds.
+5. Click the gear icon in the header, or choose **App settings…** from the tray menu, to open **App settings**: **Start with Windows**, **Close to tray** (hides the window instead of exiting) and **Dark mode**.
+
+   ![RAMOpt app settings](docs/ramopt-app-settings.png)
+
+6. Click **Clean RAM now** for immediate cleanup. **Recent activity** shows the current status and the latest cleanup result. **Restore defaults** resets all settings.
+7. RAMOpt checks GitHub Releases hourly. When a newer release exists, an **Update available** banner appears (the tray menu enables **Update now**). **Install update** downloads the release archive, verifies its SHA-256 checksum, replaces the app files and restarts RAMOpt.
+
+The window has a fixed width and cannot be resized or maximized; its height adapts only when the update banner appears.
 
 ## What it does not do
 
@@ -50,6 +54,8 @@ Windows decides when trimmed memory becomes available. Free RAM may not rise imm
 - Windows 10 or Windows 11.
 - RAMOpt requests administrator privileges because phases 1–3 use system memory APIs and volume cache operations. Launching RAMOpt or its Windows startup entry may show a UAC prompt.
 - [Rust toolchain](https://www.rust-lang.org/tools/install) with MSVC target.
+- Node.js and npm for the Vite frontend.
+- Microsoft WebView2 Runtime (the Tauri installer can bootstrap it).
 - Visual Studio Build Tools with **Desktop development with C++** workload, if Rust setup did not install MSVC linker.
 - PowerShell, included with Windows.
 
@@ -69,19 +75,26 @@ Windows decides when trimmed memory becomes available. Free RAM may not rise imm
    cargo --version
    ```
 
-3. Build optimized executable and create the release package:
+3. Install frontend dependencies and run the Tauri application:
 
    ```powershell
-   .\package-release.ps1
+   npm install
+   npm run tauri dev
    ```
 
-   Output: `release\RAMOpt\` containing `RAMOpt.exe`, `RAMOpt-updater.bat`, `LICENSE`, and `README.md`; plus `release\RAMOpt-Windows-x64.zip` and `release\SHA256SUMS.txt`. Raw binary also appears at `target\release\ramopt.exe`.
+4. Build a release bundle:
+
+   ```powershell
+   npm run tauri build
+   ```
+
+   Tauri bundles are created under `target\release\bundle\`; executable is `target\release\ramopt-tauri.exe`. `package-release.ps1` runs the Tauri build, stages the app as `RAMOpt.exe` with updater, license and README, then writes `release\RAMOpt-Windows-x64.zip` and `release\SHA256SUMS.txt`. Pushing a `vX.Y.Z` tag runs the same script in GitHub Actions and publishes the release.
 
 ## Notes
 
-- RAMOpt allows one running instance. Starting it again restores existing window.
+- RAMOpt allows one running instance. Starting it again restores the existing window.
 - Some protected processes cannot be trimmed even with elevated privileges. RAMOpt skips failed areas/processes and records native error codes in `%LOCALAPPDATA%\RAMOpt\ramopt.log`.
-- Startup toggle writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\RAMOpt`; because RAMOpt now requests administrator privileges, Windows may require interactive elevation at startup. Use manual launch if unattended startup is required.
+- Startup toggle uses the Tauri autostart plugin. The application manifest requests Administrator privileges, so Windows may show UAC at launch and startup.
 - Settings and `ramopt.log` are stored in `%LOCALAPPDATA%\RAMOpt`. An existing `settings.json` beside `RAMOpt.exe` is migrated on first launch.
 - The native working-set operation is system-wide; Windows may include RAMOpt and other eligible processes. RAMOpt does not explicitly open or target its own process.
 - `OneDrive.Sync.Service.exe` is eligible only under strict orphan checks: exact OneDrive path, current user session, no running OneDrive companion, no parent or child, and no service ownership. Otherwise it is skipped.

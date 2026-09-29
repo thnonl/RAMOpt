@@ -10,3 +10,10 @@ build-output.txt
 # Editor and local analysis state
 .vscode/
 .codegraph/
+
+# Frontend build output and dependencies
+/node_modules/
+/dist/
+
+# Tauri generated schemas (recreated by every build)
+/src-tauri/gen/

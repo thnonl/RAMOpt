@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-clean-now"
+description = "Enables the clean_now command without any pre-configured scope."
+commands.allow = ["clean_now"]
+
+[[permission]]
+identifier = "deny-clean-now"
+description = "Denies the clean_now command without any pre-configured scope."
+commands.deny = ["clean_now"]
