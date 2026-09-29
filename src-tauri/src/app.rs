@@ -375,7 +375,19 @@ struct TrayItems {
     temp: CheckMenuItem<tauri::Wry>,
     apps: CheckMenuItem<tauri::Wry>,
     startup: CheckMenuItem<tauri::Wry>,
+    menu: Menu<tauri::Wry>,
     update: MenuItem<tauri::Wry>,
+}
+impl TrayItems {
+    /// A tray menu item cannot be hidden, so "Update now" is inserted only while an update exists.
+    fn show_update(&self, available: bool) {
+        let present = self.menu.get("update").is_some();
+        if available && !present {
+            let _ = self.menu.insert(&self.update, 0);
+        } else if !available && present {
+            let _ = self.menu.remove(&self.update);
+        }
+    }
 }
 fn sync_tray(a: &AppHandle, s: &Settings) {
     if let Some(items) = a.try_state::<TrayItems>() {
@@ -425,7 +437,7 @@ fn tray_toggle(a: &AppHandle, s: &RuntimeState, key: &str) {
 fn setup_tray(a: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let handle = a.handle();
     let settings = lock(&a.state::<Arc<RuntimeState>>().settings).clone();
-    let update = MenuItem::with_id(handle, "update", "Update now", false, None::<&str>)?;
+    let update = MenuItem::with_id(handle, "update", "Update now", true, None::<&str>)?;
     let show_item = MenuItem::with_id(handle, "show", "Show RAMOpt", true, None::<&str>)?;
     let settings_item = MenuItem::with_id(handle, "settings", "App settings…", true, None::<&str>)?;
     let clean = MenuItem::with_id(handle, "clean", "Clean RAM now", true, None::<&str>)?;
@@ -467,7 +479,6 @@ fn setup_tray(a: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let menu = Menu::with_items(
         handle,
         &[
-            &update,
             &show_item,
             &clean,
             &sep,
@@ -485,6 +496,7 @@ fn setup_tray(a: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         temp,
         apps,
         startup: startup_item,
+        menu: menu.clone(),
         update,
     });
     let state = Arc::clone(a.state::<Arc<RuntimeState>>().inner());
@@ -649,7 +661,7 @@ fn workers(a: AppHandle, s: Arc<RuntimeState>) {
                 let available = version_newer(&tag);
                 *lock(&update_state.update) = if available { Some(tag) } else { None };
                 if let Some(items) = update_app.try_state::<TrayItems>() {
-                    let _ = items.update.set_enabled(available);
+                    items.show_update(available);
                 }
                 emit(&update_app);
             }
