@@ -1047,7 +1047,12 @@ Write-Output "RAMOPT_COUNTS:$closed`:$terminated"
     ))
 }
 
-pub fn clean_memory(settings: &Settings) -> String {
+pub struct CleanSummary {
+    pub message: String,
+    pub warning: bool,
+}
+
+pub fn clean_memory(settings: &Settings) -> CleanSummary {
     let report = optimize_memory();
     if settings.clean_temp {
         clear_temp();
@@ -1060,26 +1065,44 @@ pub fn clean_memory(settings: &Settings) -> String {
     } else {
         (0, 0, None)
     };
-    let measurement = if report.measurement_available {
-        format!("{:.1} MB estimated physical delta", report.freed_mb)
+    let mut parts = Vec::new();
+    parts.push(if !report.measurement_available {
+        "Cleaned, result not measurable".to_string()
+    } else if report.freed_mb >= 1.0 {
+        format!("Freed {:.0} MB", report.freed_mb)
     } else {
-        "measurement unavailable".to_string()
-    };
-    let mut status = format!(
-        "Memory cleaned: {measurement}; areas {}/{}; closed {closed} user apps",
-        report.successful_areas, report.attempted_areas
-    );
+        "Cleaned, no RAM change".to_string()
+    });
+    if report.successful_areas < report.attempted_areas {
+        parts.push(format!(
+            "{} of {} areas skipped",
+            report.attempted_areas - report.successful_areas,
+            report.attempted_areas
+        ));
+    }
+    if closed > 0 {
+        parts.push(format!("{closed} app{} closed", plural(closed as u64)));
+    }
     if terminated > 0 {
-        status.push_str(&format!("; cleaned {terminated} orphan processes"));
+        parts.push(format!(
+            "{terminated} orphan process{} ended",
+            if terminated == 1 { "" } else { "es" }
+        ));
     }
-    if !report.failed_areas.is_empty() {
-        status.push_str(&format!("; skipped {} areas", report.failed_areas.len()));
-    }
+    let mut warning = !report.failed_areas.is_empty();
     if let Some(error) = app_cleanup_error {
         log(&error);
-        status.push_str("; app cleanup failed");
+        parts.push("app cleanup failed".to_string());
+        warning = true;
     }
-    status
+    CleanSummary {
+        message: parts.join(" · "),
+        warning,
+    }
+}
+
+fn plural(n: u64) -> &'static str {
+    if n == 1 { "" } else { "s" }
 }
 
 pub fn memory_status() -> Option<(u64, u64)> {

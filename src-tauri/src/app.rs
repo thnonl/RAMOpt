@@ -34,11 +34,18 @@ struct MemorySnapshot {
     available: bool,
 }
 #[derive(Clone, Serialize)]
+struct LogEntry {
+    time_ms: u64,
+    source: String,
+    level: &'static str,
+    message: String,
+}
+#[derive(Clone, Serialize)]
 struct AppSnapshot {
     settings: Settings,
     memory: MemorySnapshot,
     status: String,
-    logs: Vec<String>,
+    logs: Vec<LogEntry>,
     update_version: Option<String>,
     current_version: String,
     cleaning: bool,
@@ -46,7 +53,7 @@ struct AppSnapshot {
 struct RuntimeState {
     settings: Mutex<Settings>,
     status: Mutex<String>,
-    logs: Mutex<Vec<String>>,
+    logs: Mutex<Vec<LogEntry>>,
     update: Mutex<Option<String>>,
     used: Mutex<u64>,
     total: Mutex<u64>,
@@ -63,7 +70,7 @@ impl RuntimeState {
         }
         Self {
             settings: Mutex::new(settings),
-            status: Mutex::new("Ready.".into()),
+            status: Mutex::new("Ready".into()),
             logs: Mutex::new(Vec::new()),
             update: Mutex::new(None),
             used: Mutex::new(0),
@@ -160,36 +167,63 @@ fn emit(a: &AppHandle) {
         let _ = a.emit("app-state-changed", snapshot(&s));
     }
 }
+const LOG_CAPACITY: usize = 20;
 fn set_status(s: &RuntimeState, msg: impl Into<String>) {
-    let msg = msg.into();
-    *lock(&s.status) = msg.clone();
-    backend::log(&msg);
+    *lock(&s.status) = msg.into();
 }
-fn push_log(s: &RuntimeState, msg: &str) {
+/// Record one activity entry for the UI and the on-disk log.
+fn push_log(s: &RuntimeState, source: &str, level: &'static str, msg: impl Into<String>) {
+    let message = msg.into();
+    backend::log(format!("[{source}] {message}"));
+    let time_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or_default();
     let mut logs = lock(&s.logs);
-    logs.push(format!("• {}", msg.trim_start_matches("• ")));
-    if logs.len() > 3 {
-        let n = logs.len() - 3;
+    logs.push(LogEntry {
+        time_ms,
+        source: source.to_string(),
+        level,
+        message,
+    });
+    if logs.len() > LOG_CAPACITY {
+        let n = logs.len() - LOG_CAPACITY;
         logs.drain(0..n);
     }
 }
-fn cleanup(s: &Settings) -> String {
+fn cleanup(s: &Settings) -> backend::CleanSummary {
     backend::clean_memory(s)
 }
-fn begin(a: AppHandle, s: Arc<RuntimeState>, settings: Settings) -> Result<(), String> {
+fn begin(
+    a: AppHandle,
+    s: Arc<RuntimeState>,
+    settings: Settings,
+    source: &'static str,
+) -> Result<(), String> {
     if s.cleaning
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .is_err()
     {
         return Err("Cleanup already running.".into());
     }
-    *lock(&s.status) = "Cleaning RAM.".into();
+    set_status(&s, "Cleaning RAM…");
     emit(&a);
     thread::spawn(move || {
-        let msg = std::panic::catch_unwind(|| cleanup(&settings))
-            .unwrap_or_else(|_| "Cleanup failed unexpectedly.".into());
-        set_status(&s, &msg);
-        push_log(&s, &msg);
+        match std::panic::catch_unwind(|| cleanup(&settings)) {
+            Ok(summary) => push_log(
+                &s,
+                source,
+                if summary.warning { "warn" } else { "ok" },
+                summary.message,
+            ),
+            Err(_) => push_log(&s, source, "error", "Cleanup failed unexpectedly"),
+        }
+        // Sample right away so the meter matches the "Freed" message instead of waiting for the poll.
+        if let Some((used, total)) = memory() {
+            *lock(&s.used) = used;
+            *lock(&s.total) = total;
+        }
+        set_status(&s, "Ready");
         *lock(&s.last_cleanup) = Some(Instant::now());
         s.cleaning.store(false, Ordering::Release);
         emit(&a);
@@ -242,7 +276,7 @@ fn restore_defaults(a: AppHandle, s: State<'_, Arc<RuntimeState>>) -> Result<Set
     }
     *lock(&s.settings) = settings.clone();
     sync_tray(&a, &settings);
-    set_status(&s, "Settings restored to defaults.");
+    push_log(&s, "Settings", "info", "Settings restored to defaults");
     emit(&a);
     Ok(settings)
 }
@@ -250,7 +284,7 @@ fn restore_defaults(a: AppHandle, s: State<'_, Arc<RuntimeState>>) -> Result<Set
 fn clean_now(a: AppHandle, s: State<'_, Arc<RuntimeState>>) -> Result<(), String> {
     let settings = lock(&s.settings).clone();
     let shared = a.state::<Arc<RuntimeState>>().inner().clone();
-    begin(a, shared, settings)
+    begin(a, shared, settings, "Manual")
 }
 #[tauri::command]
 fn hide_window(w: tauri::WebviewWindow) -> Result<(), String> {
@@ -366,7 +400,12 @@ fn tray_toggle(a: &AppHandle, s: &RuntimeState, key: &str) {
         "startup" => {
             next.start_with_windows = !next.start_with_windows;
             if let Err(e) = startup(a, next.start_with_windows) {
-                set_status(s, format!("Startup failed: {e}"));
+                push_log(
+                    s,
+                    "Settings",
+                    "error",
+                    format!("Startup setting failed: {e}"),
+                );
                 return;
             }
         }
@@ -376,7 +415,7 @@ fn tray_toggle(a: &AppHandle, s: &RuntimeState, key: &str) {
         if key == "startup" {
             let _ = startup(a, old.start_with_windows);
         }
-        set_status(s, format!("Settings save failed: {e}"));
+        push_log(s, "Settings", "error", format!("Settings save failed: {e}"));
         return;
     }
     *lock(&s.settings) = next.clone();
@@ -464,15 +503,15 @@ fn setup_tray(a: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             }
             "clean" => {
                 let settings = lock(&state.settings).clone();
-                let _ = begin(app.clone(), state.clone(), settings);
+                let _ = begin(app.clone(), state.clone(), settings, "Tray");
             }
             "exit" => app.exit(0),
             "update" => {
                 if lock(&state.update).is_none() {
-                    set_status(&state, "No update available.");
+                    push_log(&state, "Update", "info", "No update available");
                     emit(app);
                 } else if let Err(e) = start_update(app) {
-                    set_status(&state, format!("Update failed: {e}"));
+                    push_log(&state, "Update", "error", format!("Update failed: {e}"));
                     emit(app);
                 } else {
                     app.exit(0);
@@ -554,7 +593,12 @@ fn workers(a: AppHandle, s: Arc<RuntimeState>) {
             }
             let current = lock(&schedule_state.settings).clone();
             if current.auto_clean && !current.auto_threshold {
-                let _ = begin(schedule_app.clone(), schedule_state.clone(), current);
+                let _ = begin(
+                    schedule_app.clone(),
+                    schedule_state.clone(),
+                    current,
+                    "Scheduled",
+                );
             }
         }
     });
@@ -588,7 +632,12 @@ fn workers(a: AppHandle, s: Arc<RuntimeState>) {
                 && used as f64 / total as f64 * 100.0
                     >= settings.threshold_percent.clamp(1, 100) as f64
             {
-                let _ = begin(threshold_app.clone(), threshold_state.clone(), settings);
+                let _ = begin(
+                    threshold_app.clone(),
+                    threshold_state.clone(),
+                    settings,
+                    "RAM high",
+                );
             }
         }
     });
@@ -618,7 +667,7 @@ fn show_and_clean(a: &AppHandle) {
     if let Some(s) = a.try_state::<Arc<RuntimeState>>() {
         let settings = lock(&s.settings).clone();
         let shared = Arc::clone(s.inner());
-        let _ = begin(a.clone(), shared, settings);
+        let _ = begin(a.clone(), shared, settings, "Hotkey");
     }
 }
 fn register_hotkey(a: &AppHandle, key: &str) -> Result<(), String> {
@@ -670,7 +719,12 @@ fn hotkey_worker(a: &AppHandle) {
                         retry_after = Some(Instant::now() + HOTKEY_RETRY_INTERVAL);
                         // Another process may own the hotkey; report it once instead of every retry.
                         if e != last_error {
-                            set_status(&state, format!("Global shortcut failed: {e}"));
+                            push_log(
+                                &state,
+                                "Hotkey",
+                                "error",
+                                format!("Shortcut unavailable: {e}"),
+                            );
                             emit(&app);
                             last_error = e;
                         }
