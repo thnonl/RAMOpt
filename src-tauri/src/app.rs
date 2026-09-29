@@ -665,7 +665,7 @@ fn workers(a: AppHandle, s: Arc<RuntimeState>) {
                 }
                 emit(&update_app);
             }
-            for _ in 0..3600 {
+            for _ in 0..900 {
                 if update_state.shutdown.load(Ordering::Acquire) {
                     break;
                 }
