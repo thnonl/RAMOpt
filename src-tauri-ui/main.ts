@@ -38,7 +38,7 @@ const HOTKEYS: ReadonlyArray<readonly [ui: string, backend: string]> = [
 ];
 const MODES: ReadonlyArray<readonly [Mode, string]> = [['off', 'Off'], ['schedule', 'Scheduled'], ['threshold', 'RAM high']];
 
-let state: AppState = { settings: { auto_clean: true, interval_minutes: 15, hotkey: 'Ctrl+Alt+R', clean_temp: true, trim_background_apps: false, start_with_windows: false, close_to_tray: true, dark_mode: false, auto_threshold: false, threshold_percent: 75 }, memory: { available: false, used_gb: 0, total_gb: 0, percent: 0 }, status: 'Starting RAMOpt…', logs: [], update_version: null, current_version: 'v0.3.0', cleaning: false };
+let state: AppState = { settings: { auto_clean: true, interval_minutes: 15, hotkey: 'Ctrl+Alt+R', clean_temp: true, trim_background_apps: false, start_with_windows: false, close_to_tray: true, dark_mode: false, auto_threshold: false, threshold_percent: 75 }, memory: { available: false, used_gb: 0, total_gb: 0, percent: 0 }, status: 'Starting RAMOpt…', logs: [], update_version: null, current_version: 'v0.3.1', cleaning: false };
 let revision = 0;
 let saveTimer = 0;
 let settingsDirty = false;
