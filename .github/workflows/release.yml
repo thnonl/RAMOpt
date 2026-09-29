@@ -30,14 +30,26 @@ jobs:
       - name: Cache Cargo files
         uses: Swatinem/rust-cache@v2
 
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Type-check and build frontend
+        run: npm run build
+
       - name: Check formatting
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: Lint
-        run: cargo clippy --locked --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       - name: Test
-        run: cargo test --locked
+        run: cargo test --locked --workspace --lib
 
   build-and-release:
     needs: quality
@@ -96,6 +108,15 @@ jobs:
 
       - name: Cache Cargo files
         uses: Swatinem/rust-cache@v2
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
 
       - name: Verify tag matches Cargo version
         shell: pwsh

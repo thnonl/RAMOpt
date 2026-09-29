@@ -2,24 +2,13 @@ $ErrorActionPreference = 'Stop'
 
 $projectRoot = $PSScriptRoot
 $packageDir = Join-Path $projectRoot 'release\RAMOpt'
-$binary = Join-Path $projectRoot 'target\release\ramopt.exe'
+$binary = Join-Path $projectRoot 'target\release\ramopt-tauri.exe'
 
 Push-Location $projectRoot
 try {
-    $previousManifestFlag = [Environment]::GetEnvironmentVariable('RAMOPT_EMBED_ADMIN_MANIFEST', 'Process')
-    $env:RAMOPT_EMBED_ADMIN_MANIFEST = '1'
-    try {
-        cargo build --release --locked
-        $buildExitCode = $LASTEXITCODE
-    } finally {
-        if ($null -eq $previousManifestFlag) {
-            Remove-Item Env:RAMOPT_EMBED_ADMIN_MANIFEST -ErrorAction SilentlyContinue
-        } else {
-            $env:RAMOPT_EMBED_ADMIN_MANIFEST = $previousManifestFlag
-        }
-    }
-    if ($buildExitCode -ne 0) {
-        throw "Release build failed with exit code $LASTEXITCODE."
+    npm.cmd run tauri build -- --bundles nsis,msi
+    if ($LASTEXITCODE -ne 0) {
+        throw "Tauri release build failed with exit code $LASTEXITCODE."
     }
 
     # Build the package from a clean staging directory so stale user files

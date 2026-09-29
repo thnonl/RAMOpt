@@ -1,0 +1,54 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "RAMOpt",
+  "mainBinaryName": "ramopt-tauri",
+  "version": "0.3.0",
+  "identifier": "com.ramopt.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "RAMOpt",
+        "width": 680,
+        "height": 500,
+        "center": true,
+        "resizable": false,
+        "visible": true,
+        "maximizable": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: data:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self'; connect-src ipc: http://ipc.localhost",
+      "devCsp": "default-src 'self'; img-src 'self' asset: data:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost ws://localhost:5173 http://localhost:5173"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis",
+      "msi"
+    ],
+    "shortDescription": "Lightweight Windows RAM cleanup utility",
+    "longDescription": "Manage scheduled RAM maintenance, threshold cleanup, and system tray actions.",
+    "publisher": "RAMOpt",
+    "icon": [
+      "../assets/ramopt.ico"
+    ],
+    "resources": {
+      "../RAMOpt-updater.bat": "RAMOpt-updater.bat"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      }
+    }
+  }
+}
