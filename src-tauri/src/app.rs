@@ -430,7 +430,6 @@ fn setup_tray(a: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         &[
             &update,
             &show_item,
-            &settings_item,
             &clean,
             &sep,
             &schedule,
@@ -438,6 +437,7 @@ fn setup_tray(a: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             &apps,
             &startup_item,
             &sep2,
+            &settings_item,
             &exit,
         ],
     )?;
