@@ -21,10 +21,11 @@ type Settings = {
   trim_background_apps: boolean; start_with_windows: boolean; close_to_tray: boolean;
   dark_mode: boolean; auto_threshold: boolean; threshold_percent: number;
 };
+type LogEntry = { time_ms: number; source: string; level: 'ok' | 'warn' | 'error' | 'info'; message: string };
 type AppState = {
   settings: Settings;
   memory: { available: boolean; used_gb: number; total_gb: number; percent: number };
-  status: string; logs: string[]; update_version: string | null; current_version: string; cleaning: boolean;
+  status: string; logs: LogEntry[]; update_version: string | null; current_version: string; cleaning: boolean;
 };
 type ToggleKey = 'clean_temp' | 'trim_background_apps' | 'start_with_windows' | 'close_to_tray' | 'dark_mode';
 // Scheduled and threshold cleanup exclude each other, so the UI models them as one choice.
@@ -38,11 +39,14 @@ const HOTKEYS: ReadonlyArray<readonly [ui: string, backend: string]> = [
 ];
 const MODES: ReadonlyArray<readonly [Mode, string]> = [['off', 'Off'], ['schedule', 'Scheduled'], ['threshold', 'RAM high']];
 
-let state: AppState = { settings: { auto_clean: true, interval_minutes: 15, hotkey: 'Ctrl+Alt+R', clean_temp: true, trim_background_apps: false, start_with_windows: false, close_to_tray: true, dark_mode: false, auto_threshold: false, threshold_percent: 75 }, memory: { available: false, used_gb: 0, total_gb: 0, percent: 0 }, status: 'Starting RAMOpt…', logs: [], update_version: null, current_version: 'v0.3.1', cleaning: false };
+let state: AppState = { settings: { auto_clean: true, interval_minutes: 15, hotkey: 'Ctrl+Alt+R', clean_temp: true, trim_background_apps: false, start_with_windows: false, close_to_tray: true, dark_mode: false, auto_threshold: false, threshold_percent: 75 }, memory: { available: false, used_gb: 0, total_gb: 0, percent: 0 }, status: 'Starting…', logs: [], update_version: null, current_version: 'v0.3.2', cleaning: false };
 let revision = 0;
 let saveTimer = 0;
 let settingsDirty = false;
 let updating = false;
+// Frontend-only message (failed command, updater start); backend activity lives in state.logs.
+let notice: { text: string; error: boolean } | null = null;
+let noticeTimer = 0;
 let settingsOpen = false;
 let unlistenState: Unlisten | undefined;
 let unlistenSettings: Unlisten | undefined;
@@ -133,12 +137,29 @@ function renderModal(): void {
   (root.firstElementChild as HTMLElement).inert = settingsOpen;
 }
 
+const timeFmt = new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+// Newest first, capped so the card keeps a fixed height.
+function activityRows(): string {
+  const rows = state.logs.slice(-3).reverse().map(x =>
+    `<li class="lvl-${x.level}" title="${esc(`${x.source}: ${x.message}`)}"><time>${timeFmt.format(new Date(x.time_ms))}</time><span class="log-src">${esc(x.source)}</span><span class="log-msg">${esc(x.message)}</span></li>`);
+  return rows.join('') || '<li class="empty-log">No activity yet.</li>';
+}
+
+function statusText(): string {
+  return notice?.text ?? (state.cleaning ? 'Cleaning RAM…' : 'Ready');
+}
+function setNotice(text: string, error: boolean): void {
+  notice = { text, error };
+  window.clearTimeout(noticeTimer);
+  noticeTimer = window.setTimeout(() => { notice = null; renderLive(); }, 6000);
+}
+
 function renderLive(): void {
   byId('version').textContent = state.current_version;
   setHtml('banner', state.update_version ? `<section class="update-banner"><div><strong>Update available</strong><span>${esc(state.update_version)} is ready · you have ${esc(state.current_version)}</span></div><button class="button button-update" data-action="install-update" ${updating ? 'disabled' : ''}>${updating ? 'Starting…' : 'Install update'}</button></section>` : '');
   setHtml('memory', memoryCard());
-  setHtml('activity', `<div class="activity-head"><h2>Recent activity</h2><span class="activity-status" id="status" role="status"><span class="status-text" title="${esc(state.status)}">${esc(state.status)}</span><span class="live-dot ${state.cleaning ? 'busy' : ''}" title="${state.cleaning ? 'Cleanup in progress' : 'Ready'}"></span></span></div><ol class="log-list">${state.logs.slice(-1).map(x => `<li>${esc(x)}</li>`).join('') || '<li class="empty-log">No cleanup logs yet.</li>'}</ol>`);
-  setHtml('actions', `<button class="button button-secondary" data-action="restore-defaults">Restore defaults</button><span class="footer-spacer"></span><button class="button button-primary" data-action="clean-now" ${state.cleaning ? 'disabled' : ''}><span class="button-icon">✦</span>${state.cleaning ? 'Cleaning…' : 'Clean RAM now'}</button>`);
+  setHtml('activity', `<div class="activity-head"><h2>Recent activity</h2><span class="activity-status" id="status" role="status"><span class="status-text ${notice?.error ? 'is-error' : ''}" title="${esc(statusText())}">${esc(statusText())}</span><span class="live-dot ${state.cleaning ? 'busy' : ''}" title="${state.cleaning ? 'Cleanup in progress' : 'Ready'}"></span></span></div><ol class="log-list">${activityRows()}</ol>`);
+  setHtml('actions', `<button class="button button-secondary" data-action="restore-defaults">Restore defaults</button><span class="footer-spacer"></span><button class="button button-primary" data-action="clean-now" ${state.cleaning ? 'disabled' : ''}><span class="button-icon ${state.cleaning ? 'spin' : ''}" aria-hidden="true">✦</span>${state.cleaning ? 'Cleaning…' : 'Clean RAM now'}</button>`);
 }
 
 let lastFitHeight = 0;
@@ -232,7 +253,7 @@ function closeSettings(): void {
 async function run(task: () => Promise<unknown>): Promise<void> { try { await task(); } catch (e) { showError(e); } }
 async function installUpdate(): Promise<void> {
   updating = true;
-  state.status = 'Starting updater…';
+  setNotice('Starting updater…', false);
   renderLive();
   try { await invoke('install_update'); } catch (e) { updating = false; showError(e); }
 }
@@ -270,9 +291,8 @@ async function refresh(): Promise<void> {
   } catch (e) { showError(e); }
 }
 function showError(e: unknown): void {
-  state.status = typeof e === 'string' ? e : e instanceof Error ? e.message : 'RAMOpt operation failed.';
-  state.cleaning = false;
-  render();
+  setNotice(typeof e === 'string' ? e : e instanceof Error ? e.message : 'RAMOpt operation failed.', true);
+  renderLive();
 }
 async function initialize(): Promise<void> {
   try {
