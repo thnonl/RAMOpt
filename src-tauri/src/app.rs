@@ -90,21 +90,74 @@ fn app_dir() -> PathBuf {
         .and_then(|p| p.parent().map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from("."))
 }
-fn startup(a: &AppHandle, on: bool) -> Result<(), String> {
-    if on {
-        a.autolaunch().enable()
-    } else {
-        a.autolaunch().disable()
-    }
-    .map_err(|e| e.to_string())
+// The exe requires elevation, and Windows silently skips elevated apps in the
+// HKCU Run key at logon. A highest-privilege logon scheduled task starts it
+// without a UAC prompt, so the autostart plugin is only used to drop the old
+// Run entry.
+const STARTUP_TASK: &str = "RAMOpt";
+const STARTUP_ENABLE_SCRIPT: &str = "$ErrorActionPreference='Stop';\
+$user=[Security.Principal.WindowsIdentity]::GetCurrent().Name;\
+$action=New-ScheduledTaskAction -Execute $env:RAMOPT_EXE -WorkingDirectory (Split-Path $env:RAMOPT_EXE);\
+$trigger=New-ScheduledTaskTrigger -AtLogOn -User $user;\
+$principal=New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest;\
+$settings=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew;\
+Register-ScheduledTask -TaskName $env:RAMOPT_TASK -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null";
+fn startup_task_exists() -> bool {
+    let mut cmd = Command::new(winbin("schtasks.exe"));
+    cmd.creation_flags(CREATE_NO_WINDOW)
+        .args(["/Query", "/TN", STARTUP_TASK]);
+    run_cmd(cmd, COMMAND_TIMEOUT).is_ok_and(|o| o.status.success())
 }
-fn sync_startup(a: &AppHandle, s: &Settings) {
-    if let Ok(on) = a.autolaunch().is_enabled()
-        && on != s.start_with_windows
-        && let Err(e) = startup(a, s.start_with_windows)
-    {
-        backend::log(format!("Startup sync failed: {e}"));
+fn clear_startup_approval() {
+    let mut cmd = Command::new(winbin("reg.exe"));
+    cmd.creation_flags(CREATE_NO_WINDOW).args([
+        "delete",
+        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run",
+        "/v",
+        STARTUP_TASK,
+        "/f",
+    ]);
+    let _ = run_cmd(cmd, COMMAND_TIMEOUT);
+}
+fn startup(a: &AppHandle, on: bool) -> Result<(), String> {
+    let _ = a.autolaunch().disable();
+    clear_startup_approval();
+    let output = if on {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let mut cmd = Command::new(winbin(r"WindowsPowerShell\v1.0\powershell.exe"));
+        cmd.creation_flags(CREATE_NO_WINDOW)
+            .env("RAMOPT_EXE", exe)
+            .env("RAMOPT_TASK", STARTUP_TASK)
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                STARTUP_ENABLE_SCRIPT,
+            ]);
+        run_cmd(cmd, COMMAND_TIMEOUT)?
+    } else if startup_task_exists() {
+        let mut cmd = Command::new(winbin("schtasks.exe"));
+        cmd.creation_flags(CREATE_NO_WINDOW)
+            .args(["/Delete", "/TN", STARTUP_TASK, "/F"]);
+        run_cmd(cmd, COMMAND_TIMEOUT)?
+    } else {
+        return Ok(());
+    };
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().into())
     }
+}
+fn sync_startup(a: AppHandle, on: bool) {
+    thread::spawn(move || {
+        // Re-register when enabled so a moved exe or the legacy Run entry gets fixed.
+        if (on || startup_task_exists())
+            && let Err(e) = startup(&a, on)
+        {
+            backend::log(format!("Startup sync failed: {e}"));
+        }
+    });
 }
 fn winbin(n: &str) -> PathBuf {
     std::env::var_os("SystemRoot")
@@ -760,7 +813,10 @@ pub fn run() {
         .plugin(autostart)
         .setup(move |app| {
             app.manage(state.clone());
-            sync_startup(app.handle(), &lock(&state.settings));
+            sync_startup(
+                app.handle().clone(),
+                lock(&state.settings).start_with_windows,
+            );
             setup_tray(app)?;
             let handle = app.handle().clone();
             workers(handle.clone(), state.clone());
