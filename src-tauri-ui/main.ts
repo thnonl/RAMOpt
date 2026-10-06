@@ -39,7 +39,7 @@ const HOTKEYS: ReadonlyArray<readonly [ui: string, backend: string]> = [
 ];
 const MODES: ReadonlyArray<readonly [Mode, string]> = [['off', 'Off'], ['schedule', 'Scheduled'], ['threshold', 'RAM high']];
 
-let state: AppState = { settings: { auto_clean: true, interval_minutes: 15, hotkey: 'Ctrl+Alt+R', clean_temp: true, trim_background_apps: false, start_with_windows: false, close_to_tray: true, dark_mode: false, auto_threshold: false, threshold_percent: 75 }, memory: { available: false, used_gb: 0, total_gb: 0, percent: 0 }, status: 'Starting…', logs: [], update_version: null, current_version: 'v0.3.4', cleaning: false };
+let state: AppState = { settings: { auto_clean: true, interval_minutes: 15, hotkey: 'Ctrl+Alt+R', clean_temp: true, trim_background_apps: false, start_with_windows: false, close_to_tray: true, dark_mode: false, auto_threshold: false, threshold_percent: 75 }, memory: { available: false, used_gb: 0, total_gb: 0, percent: 0 }, status: 'Starting…', logs: [], update_version: null, current_version: 'v0.3.5', cleaning: false };
 let revision = 0;
 let saveTimer = 0;
 let settingsDirty = false;
@@ -162,9 +162,13 @@ function renderLive(): void {
   setHtml('actions', `<button class="button button-secondary" data-action="restore-defaults">Restore defaults</button><span class="footer-spacer"></span><button class="button button-primary" data-action="clean-now" ${state.cleaning ? 'disabled' : ''}><span class="button-icon ${state.cleaning ? 'spin' : ''}" aria-hidden="true">✦</span>${state.cleaning ? 'Cleaning…' : 'Clean RAM now'}</button>`);
 }
 
-let lastFitHeight = 0;
+// Logical width from tauri.conf.json. The window is not user-resizable, so it is always restored to this width.
+const WINDOW_WIDTH = 680;
 let fitTimer = 0;
 // Size the window to its content so the UI never needs a scrollbar; it grows or shrinks per mode and banner.
+// The target is checked against the live window size, never a cached value or the current width: a DPI or
+// resolution change (e.g. a Remote Desktop session resizing the screen) can resize the window behind our back,
+// and that size must be corrected, not kept.
 // A timer is used instead of requestAnimationFrame, which is paused while the window is hidden in the tray.
 function fitWindow(): void {
   window.clearTimeout(fitTimer);
@@ -174,9 +178,9 @@ function fitWindow(): void {
     if (!shell || !dpi) return;
     const limit = Math.max(400, screen.availHeight - 48);
     const height = Math.min(Math.ceil(shell.getBoundingClientRect().height), limit);
-    if (height === lastFitHeight) return;
-    lastFitHeight = height;
-    getCurrentWindow().setSize(new dpi.LogicalSize(window.innerWidth, height)).catch(() => { lastFitHeight = 0; });
+    // 1px slack absorbs physical-pixel rounding at fractional scale factors.
+    if (Math.abs(window.innerWidth - WINDOW_WIDTH) <= 1 && Math.abs(window.innerHeight - height) <= 1) return;
+    getCurrentWindow().setSize(new dpi.LogicalSize(WINDOW_WIDTH, height)).catch(() => {});
   }, 30);
 }
 
@@ -312,3 +316,8 @@ window.addEventListener('beforeunload', () => { unlistenState?.(); unlistenSetti
 buildShell(); bindControls(); render(); void initialize();
 // Content height drives the window height, so any layout change (mode, banner, font load) re-fits it.
 new ResizeObserver(fitWindow).observe(root.firstElementChild!);
+// External size changes (DPI or display change while shown or hidden in the tray) are re-fitted too,
+// including when the window is brought back from the tray.
+window.addEventListener('resize', fitWindow);
+window.addEventListener('focus', fitWindow);
+document.addEventListener('visibilitychange', fitWindow);

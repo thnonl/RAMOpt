@@ -419,8 +419,48 @@ fn show(a: &AppHandle) {
     if let Some(w) = a.get_webview_window("main") {
         let _ = w.show();
         let _ = w.unminimize();
+        keep_on_screen(&w);
         let _ = w.set_focus();
     }
+}
+/// Re-centers the window when it is not fully inside any monitor's work area. A resolution or DPI change, such as
+/// a Remote Desktop session switching to the client's screen, can leave it partly or fully off-screen.
+fn keep_on_screen(w: &tauri::WebviewWindow) {
+    if w.is_minimized().unwrap_or(true) {
+        return;
+    }
+    let (Ok(pos), Ok(size), Ok(monitors)) =
+        (w.outer_position(), w.outer_size(), w.available_monitors())
+    else {
+        return;
+    };
+    let (width, height) = (size.width as i32, size.height as i32);
+    // The outer rect includes the invisible DWM border, which may sit outside the work area at its edges.
+    let slack = (8.0 * w.scale_factor().unwrap_or(1.0)) as i32;
+    let fits = |m: &tauri::Monitor| {
+        let area = m.work_area();
+        let (left, top) = (area.position.x, area.position.y);
+        let (right, bottom) = (left + area.size.width as i32, top + area.size.height as i32);
+        pos.x >= left - slack
+            && pos.y >= top - slack
+            && pos.x + width <= right + slack
+            && pos.y + height <= bottom + slack
+    };
+    if monitors.iter().any(fits) {
+        return;
+    }
+    let Some(monitor) = w
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| w.primary_monitor().ok().flatten())
+    else {
+        return;
+    };
+    let area = monitor.work_area();
+    let x = area.position.x + (area.size.width as i32 - width).max(0) / 2;
+    let y = area.position.y + (area.size.height as i32 - height).max(0) / 2;
+    let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
 }
 #[derive(Clone)]
 struct TrayItems {
@@ -825,15 +865,26 @@ pub fn run() {
             let window_app = handle.clone();
             app.get_webview_window("main")
                 .expect("main configured")
-                .on_window_event(move |event| {
-                    if let tauri::WindowEvent::CloseRequested { api, .. } = event
-                        && lock(&local.settings).close_to_tray
+                .on_window_event(move |event| match event {
+                    tauri::WindowEvent::CloseRequested { api, .. }
+                        if lock(&local.settings).close_to_tray =>
                     {
                         api.prevent_close();
                         if let Some(w) = window_app.get_webview_window("main") {
                             let _ = w.hide();
                         }
                     }
+                    // Deferred so the check sees the final rect: a DPI change applies its new size after this event.
+                    tauri::WindowEvent::Resized(_)
+                    | tauri::WindowEvent::ScaleFactorChanged { .. } => {
+                        let app = window_app.clone();
+                        let _ = window_app.run_on_main_thread(move || {
+                            if let Some(w) = app.get_webview_window("main") {
+                                keep_on_screen(&w);
+                            }
+                        });
+                    }
+                    _ => {}
                 });
             Ok(())
         })
