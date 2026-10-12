@@ -1,13 +1,12 @@
 import './style.css';
 
-type AppCloseEvent = { preventDefault: () => void };
 type Unlisten = () => void;
 declare global {
   interface Window {
     __TAURI__: {
       core: { invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> };
       event: { listen<T>(name: string, handler: (event: { payload: T }) => void): Promise<Unlisten> };
-      window: { getCurrentWindow(): { onCloseRequested(handler: (event: AppCloseEvent) => void | Promise<void>): Promise<Unlisten>; setSize(size: unknown): Promise<void> } };
+      window: { getCurrentWindow(): { setSize(size: unknown): Promise<void> } };
       dpi?: { LogicalSize: new (width: number, height: number) => unknown };
     };
   }
@@ -25,7 +24,7 @@ type LogEntry = { time_ms: number; source: string; level: 'ok' | 'warn' | 'error
 type AppState = {
   settings: Settings;
   memory: { available: boolean; used_gb: number; total_gb: number; percent: number };
-  status: string; logs: LogEntry[]; update_version: string | null; current_version: string; cleaning: boolean;
+  status: string; logs: LogEntry[]; update_version: string | null; current_version: string; cleaning: boolean; hotkey_active: boolean;
 };
 type ToggleKey = 'clean_temp' | 'trim_background_apps' | 'start_with_windows' | 'close_to_tray' | 'dark_mode';
 // Scheduled and threshold cleanup exclude each other, so the UI models them as one choice.
@@ -39,7 +38,7 @@ const HOTKEYS: ReadonlyArray<readonly [ui: string, backend: string]> = [
 ];
 const MODES: ReadonlyArray<readonly [Mode, string]> = [['off', 'Off'], ['schedule', 'Scheduled'], ['threshold', 'RAM high']];
 
-let state: AppState = { settings: { auto_clean: true, interval_minutes: 15, hotkey: 'Ctrl+Alt+R', clean_temp: true, trim_background_apps: false, start_with_windows: false, close_to_tray: true, dark_mode: false, auto_threshold: false, threshold_percent: 75 }, memory: { available: false, used_gb: 0, total_gb: 0, percent: 0 }, status: 'Starting…', logs: [], update_version: null, current_version: 'v0.3.5', cleaning: false };
+let state: AppState = { settings: { auto_clean: true, interval_minutes: 15, hotkey: 'Ctrl+Alt+R', clean_temp: true, trim_background_apps: false, start_with_windows: false, close_to_tray: true, dark_mode: false, auto_threshold: false, threshold_percent: 75 }, memory: { available: false, used_gb: 0, total_gb: 0, percent: 0 }, status: 'Starting…', logs: [], update_version: null, current_version: 'v0.3.6', cleaning: false, hotkey_active: true };
 let revision = 0;
 let saveTimer = 0;
 let settingsDirty = false;
@@ -50,7 +49,6 @@ let noticeTimer = 0;
 let settingsOpen = false;
 let unlistenState: Unlisten | undefined;
 let unlistenSettings: Unlisten | undefined;
-let closeRequestedHandler: Unlisten | undefined;
 const root = document.querySelector<HTMLDivElement>('#app')!;
 const esc = (s: string): string => s.replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]!);
 const modeOf = (s: Settings): Mode => s.auto_clean ? 'schedule' : s.auto_threshold ? 'threshold' : 'off';
@@ -66,11 +64,11 @@ function modePanel(s: Settings): string {
       return `<div class="mode-line"><label for="interval">Clean every</label><span class="input-suffix"><input id="interval" type="number" min="1" max="1440" value="${s.interval_minutes}"><span>minutes</span></span></div>
         <p class="mode-hint">Runs on this timer, whatever the RAM usage.</p>`;
     case 'threshold':
-      return `<div class="mode-line"><label for="threshold">Clean when RAM reaches</label><b id="threshold-value" class="value-pill">${thresholdOf(s)}%</b></div>
-        <input id="threshold" type="range" min="1" max="100" value="${thresholdOf(s)}">
+      return `<div class="mode-line"><label for="threshold">Clean when RAM reaches</label><b id="threshold-value" class="value-pill"></b></div>
+        <input id="threshold" type="range" min="1" max="100">
         <p class="mode-hint" title="At most one cleanup per minute">Checked every minute.</p>`;
     default:
-      return `<p class="mode-hint">Only cleans when you press <strong>Clean RAM now</strong> or the hotkey.</p>`;
+      return `<p class="mode-hint">Cleans only on <strong>Clean RAM now</strong> or the hotkey.</p>`;
   }
 }
 
@@ -86,14 +84,14 @@ function cleanOptionsCard(s: Settings): string {
   const current = HOTKEYS.find(([ui]) => ui === s.hotkey)?.[0] ?? HOTKEYS[0][0];
   return `<h2 class="card-title">Cleaning</h2>
     ${toggleRow('clean_temp', 'Clean temp files', 'Removes files older than 24 hours', s.clean_temp)}
-    ${toggleRow('trim_background_apps', 'Close background apps', 'Skips services and protected apps', s.trim_background_apps)}
-    <label class="row"><span class="row-text"><strong>Quick-clean hotkey</strong><small>Works from any app</small></span><select id="hotkey" aria-label="Quick-clean hotkey">${HOTKEYS.map(([ui]) => `<option value="${ui}" ${current === ui ? 'selected' : ''}>${ui.replaceAll('+', ' + ')}</option>`).join('')}</select></label>`;
+    ${toggleRow('trim_background_apps', 'Close background apps', 'Asks apps to close, skips services', s.trim_background_apps)}
+    <label class="row"><span class="row-text"><strong>Quick-clean hotkey</strong>${state.hotkey_active ? '<small>Works from any app</small>' : '<small class="hint-error" title="Another program uses this key. RAMOpt retries every 10 seconds, or pick another key.">Not active (key in use)</small>'}</span><select id="hotkey" aria-label="Quick-clean hotkey">${HOTKEYS.map(([ui]) => `<option value="${ui}" ${current === ui ? 'selected' : ''}>${ui.replaceAll('+', ' + ')}</option>`).join('')}</select></label>`;
 }
 
 function settingsModal(s: Settings): string {
   return `<div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <div class="modal-head"><h2 id="modal-title">App settings</h2><button class="icon-button" data-action="close-settings" aria-label="Close settings" title="Close">✕</button></div>
-    ${toggleRow('start_with_windows', 'Start with Windows', 'Launches RAMOpt after you sign in', s.start_with_windows)}
+    ${toggleRow('start_with_windows', 'Start with Windows', 'Launches at sign-in; a UAC prompt may appear', s.start_with_windows)}
     ${toggleRow('close_to_tray', 'Close to tray', 'Keeps RAMOpt running when the window closes', s.close_to_tray)}
     ${toggleRow('dark_mode', 'Dark mode', 'Uses the dark theme', s.dark_mode)}
   </div>`;
@@ -117,11 +115,30 @@ function memoryCard(): string {
 }
 
 const cache = new Map<string, string>();
-// Skip identical markup so a periodic refresh never resets a field the user is editing.
+// Stable selector for the control that has focus, so it can be found again in rebuilt markup.
+function focusSelector(el: HTMLElement): string | null {
+  if (el.id) return `#${el.id}`;
+  if (el.dataset.setting) return `[data-setting="${el.dataset.setting}"]`;
+  if (el.dataset.action) return `[data-action="${el.dataset.action}"]`;
+  if (el instanceof HTMLInputElement && el.name) return `input[name="${el.name}"][value="${el.value}"]`;
+  return null;
+}
+// Skip identical markup so a periodic refresh never resets a field the user is editing. When markup does change
+// (e.g. a toggle's checked state), keyboard focus and the caret are restored on the rebuilt control.
 function setHtml(id: string, html: string): void {
   if (cache.get(id) === html) return;
   cache.set(id, html);
-  document.getElementById(id)!.innerHTML = html;
+  const host = document.getElementById(id)!;
+  const active = document.activeElement;
+  const selector = active instanceof HTMLElement && host.contains(active) ? focusSelector(active) : null;
+  const caret = active instanceof HTMLInputElement ? [active.selectionStart, active.selectionEnd] as const : null;
+  host.innerHTML = html;
+  if (!selector || document.activeElement !== document.body) return;
+  const next = host.querySelector<HTMLElement>(selector);
+  next?.focus({ preventScroll: true });
+  if (next instanceof HTMLInputElement && caret?.[0] != null) {
+    try { next.setSelectionRange(caret[0], caret[1]); } catch { /* input type without a text caret */ }
+  }
 }
 
 function renderSettings(): void {
@@ -129,6 +146,17 @@ function renderSettings(): void {
   document.documentElement.dataset.theme = s.dark_mode ? 'dark' : 'light';
   setHtml('auto', autoCard(s));
   setHtml('clean-options', cleanOptionsCard(s));
+  syncThreshold();
+}
+
+// The slider value is kept out of the cached markup, so a refresh never rebuilds the element mid-drag or while it
+// has keyboard focus; only the value and the pill are updated in place.
+function syncThreshold(): void {
+  const slider = document.getElementById('threshold') as HTMLInputElement | null;
+  if (!slider) return;
+  const value = String(thresholdOf(state.settings));
+  if (slider.value !== value) slider.value = value;
+  byId('threshold-value').textContent = `${value}%`;
 }
 
 function renderModal(): void {
@@ -138,7 +166,8 @@ function renderModal(): void {
 }
 
 const timeFmt = new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
-// Newest first, capped so the card keeps a fixed height.
+// Newest first. At most 3 rows are shown and the list reserves room for 3 (see .log-list), so the card keeps a
+// fixed height whatever the row count.
 function activityRows(): string {
   const rows = state.logs.slice(-3).reverse().map(x =>
     `<li class="lvl-${x.level}" title="${esc(`${x.source}: ${x.message}`)}"><time>${timeFmt.format(new Date(x.time_ms))}</time><span class="log-src">${esc(x.source)}</span><span class="log-msg">${esc(x.message)}</span></li>`);
@@ -211,6 +240,13 @@ function fromBackendSettings(settings: Settings): Settings {
   return { ...settings, hotkey: HOTKEYS.find(([, backend]) => backend === settings.hotkey)?.[0] ?? HOTKEYS[0][0] };
 }
 
+// Clamp to 1..1440; an empty or non-numeric entry keeps the current value. The field always shows what is applied.
+function applyInterval(input: HTMLInputElement): void {
+  const typed = Math.round(Number(input.value));
+  const minutes = input.value.trim() === '' || Number.isNaN(typed) ? state.settings.interval_minutes : Math.max(1, Math.min(1440, typed));
+  input.value = String(minutes);
+  patch({ interval_minutes: minutes });
+}
 function setMode(mode: Mode): void {
   patch({ auto_clean: mode === 'schedule', auto_threshold: mode === 'threshold' });
 }
@@ -219,7 +255,7 @@ function bindControls(): void {
   root.addEventListener('change', event => {
     const el = event.target as HTMLInputElement | HTMLSelectElement;
     if (el.name === 'mode') setMode(el.value as Mode);
-    else if (el.id === 'interval') patch({ interval_minutes: Math.max(1, Math.min(1440, Math.round(Number(el.value)) || 15)) });
+    else if (el.id === 'interval') applyInterval(el as HTMLInputElement);
     else if (el.id === 'threshold') patch({ threshold_percent: Number(el.value) });
     else if (el.id === 'hotkey') patch({ hotkey: el.value });
     else if (el.dataset.setting) patch({ [el.dataset.setting as ToggleKey]: (el as HTMLInputElement).checked });
@@ -228,7 +264,9 @@ function bindControls(): void {
     const el = event.target as HTMLInputElement;
     if (el.id !== 'threshold') return;
     state.settings.threshold_percent = Number(el.value);
-    document.getElementById('threshold-value')!.textContent = `${thresholdOf(state.settings)}%`;
+    // Keep the dragged value across the periodic refresh until the change event saves it.
+    settingsDirty = true;
+    syncThreshold();
     renderLive();
   });
   document.addEventListener('keydown', event => { if (event.key === 'Escape') closeSettings(); });
@@ -238,7 +276,7 @@ function bindControls(): void {
     else if (action === 'open-settings') openSettings();
     else if (action === 'close-settings') closeSettings();
     else if (action === 'restore-defaults') void restoreDefaults();
-    else if (action === 'clean-now') void run(async () => { await invoke('clean_now'); await refresh(); });
+    else if (action === 'clean-now') void cleanNow();
     else if (action === 'install-update') void installUpdate();
   });
 }
@@ -253,6 +291,16 @@ function closeSettings(): void {
   settingsOpen = false;
   renderModal();
   document.querySelector<HTMLElement>('[data-action=open-settings]')?.focus();
+}
+async function cleanNow(): Promise<void> {
+  // Disable the button before the backend answers so a double click cannot start a second cleanup.
+  if (state.cleaning) return;
+  state.cleaning = true;
+  renderLive();
+  await run(async () => {
+    try { await invoke('clean_now'); } catch (e) { state.cleaning = false; throw e; }
+  });
+  await refresh();
 }
 async function run(task: () => Promise<unknown>): Promise<void> { try { await task(); } catch (e) { showError(e); } }
 async function installUpdate(): Promise<void> {
@@ -303,16 +351,10 @@ async function initialize(): Promise<void> {
     await refresh();
     unlistenState = await listen('app-state-changed', () => void refresh());
     unlistenSettings = await listen('open-settings', openSettings);
-    closeRequestedHandler = await getCurrentWindow().onCloseRequested(async event => {
-      if (state.settings.close_to_tray) {
-        event.preventDefault();
-        try { await invoke('hide_window'); } catch (error) { showError(error); }
-      }
-    });
     window.setInterval(() => void refresh(), 5000);
   } catch (e) { showError(e); }
 }
-window.addEventListener('beforeunload', () => { unlistenState?.(); unlistenSettings?.(); closeRequestedHandler?.(); });
+window.addEventListener('beforeunload', () => { unlistenState?.(); unlistenSettings?.(); });
 buildShell(); bindControls(); render(); void initialize();
 // Content height drives the window height, so any layout change (mode, banner, font load) re-fits it.
 new ResizeObserver(fitWindow).observe(root.firstElementChild!);

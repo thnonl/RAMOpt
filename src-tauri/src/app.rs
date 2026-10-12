@@ -49,6 +49,7 @@ struct AppSnapshot {
     update_version: Option<String>,
     current_version: String,
     cleaning: bool,
+    hotkey_active: bool,
 }
 struct RuntimeState {
     settings: Mutex<Settings>,
@@ -58,6 +59,10 @@ struct RuntimeState {
     used: Mutex<u64>,
     total: Mutex<u64>,
     cleaning: AtomicBool,
+    /// False while the saved hotkey could not be registered and none is registered (startup conflict).
+    hotkey_failed: AtomicBool,
+    /// Set by Restore defaults when it switches the hotkey back to the default, so a failure can say so.
+    hotkey_restored: AtomicBool,
     last_cleanup: Mutex<Option<Instant>>,
     shutdown: AtomicBool,
 }
@@ -76,6 +81,8 @@ impl RuntimeState {
             used: Mutex::new(0),
             total: Mutex::new(0),
             cleaning: AtomicBool::new(false),
+            hotkey_failed: AtomicBool::new(false),
+            hotkey_restored: AtomicBool::new(false),
             last_cleanup: Mutex::new(None),
             shutdown: AtomicBool::new(false),
         }
@@ -94,7 +101,12 @@ fn app_dir() -> PathBuf {
 // HKCU Run key at logon. A highest-privilege logon scheduled task starts it
 // without a UAC prompt, so the autostart plugin is only used to drop the old
 // Run entry.
-const STARTUP_TASK: &str = "RAMOpt";
+// The opt-in UI-test build must not touch the task of an installed RAMOpt.
+const STARTUP_TASK: &str = if backend::UI_TEST_BUILD {
+    "RAMOpt-uitest"
+} else {
+    "RAMOpt"
+};
 const STARTUP_ENABLE_SCRIPT: &str = "$ErrorActionPreference='Stop';\
 $user=[Security.Principal.WindowsIdentity]::GetCurrent().Name;\
 $action=New-ScheduledTaskAction -Execute $env:RAMOPT_EXE -WorkingDirectory (Split-Path $env:RAMOPT_EXE);\
@@ -213,6 +225,7 @@ fn snapshot(s: &RuntimeState) -> AppSnapshot {
         update_version: lock(&s.update).clone(),
         current_version: format!("v{}", env!("CARGO_PKG_VERSION")),
         cleaning: s.cleaning.load(Ordering::Acquire),
+        hotkey_active: !s.hotkey_failed.load(Ordering::Acquire),
     }
 }
 fn emit(a: &AppHandle) {
@@ -271,7 +284,7 @@ fn begin(
             ),
             Err(_) => push_log(&s, source, "error", "Cleanup failed unexpectedly"),
         }
-        // Sample right away so the meter matches the "Freed" message instead of waiting for the poll.
+        // Sample right away so the meter matches the "freed" message instead of waiting for the poll.
         if let Some((used, total)) = memory() {
             *lock(&s.used) = used;
             *lock(&s.total) = total;
@@ -327,6 +340,9 @@ fn restore_defaults(a: AppHandle, s: State<'_, Arc<RuntimeState>>) -> Result<Set
         }
         return Err(e);
     }
+    if old.hotkey != settings.hotkey {
+        s.hotkey_restored.store(true, Ordering::Release);
+    }
     *lock(&s.settings) = settings.clone();
     sync_tray(&a, &settings);
     push_log(&s, "Settings", "info", "Settings restored to defaults");
@@ -340,10 +356,6 @@ fn clean_now(a: AppHandle, s: State<'_, Arc<RuntimeState>>) -> Result<(), String
     begin(a, shared, settings, "Manual")
 }
 #[tauri::command]
-fn hide_window(w: tauri::WebviewWindow) -> Result<(), String> {
-    w.hide().map_err(|e| e.to_string())
-}
-#[tauri::command]
 fn install_update(a: AppHandle, s: State<'_, Arc<RuntimeState>>) -> Result<(), String> {
     if lock(&s.update).is_none() {
         return Err("No update available.".into());
@@ -353,6 +365,9 @@ fn install_update(a: AppHandle, s: State<'_, Arc<RuntimeState>>) -> Result<(), S
     Ok(())
 }
 fn start_update(a: &AppHandle) -> Result<(), String> {
+    if backend::UI_TEST_BUILD {
+        return Err("Updates are disabled in the UI-test build".into());
+    }
     if UPDATE_STARTED
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .is_err()
@@ -553,7 +568,7 @@ fn setup_tray(a: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let apps = CheckMenuItem::with_id(
         handle,
         "apps",
-        "Close user apps (safe)",
+        "Close background apps",
         true,
         settings.trim_background_apps,
         None::<&str>,
@@ -684,26 +699,44 @@ fn workers(a: AppHandle, s: Arc<RuntimeState>) {
             let original = lock(&schedule_state.settings).clone();
             let mut delay =
                 Duration::from_secs(u64::from(original.interval_minutes.clamp(1, 1440)) * 60);
+            let mut changed = false;
             while !delay.is_zero() && !schedule_state.shutdown.load(Ordering::Acquire) {
                 let slice = delay.min(Duration::from_millis(500));
                 thread::sleep(slice);
                 delay = delay.saturating_sub(slice);
                 let now = lock(&schedule_state.settings).clone();
-                if now.interval_minutes != original.interval_minutes || !now.auto_clean {
-                    delay = Duration::ZERO;
+                // A new interval, or scheduling switched on or off, restarts the timer without cleaning.
+                if now.interval_minutes != original.interval_minutes
+                    || now.auto_clean != original.auto_clean
+                {
+                    changed = true;
+                    break;
                 }
+            }
+            if changed {
+                continue;
             }
             if schedule_state.shutdown.load(Ordering::Acquire) {
                 break;
             }
             let current = lock(&schedule_state.settings).clone();
             if current.auto_clean && !current.auto_threshold {
-                let _ = begin(
+                // Once per interval, so a skipped run is worth one entry. The RAM-high worker already checks
+                // `cleaning` and retries every minute, so it stays silent.
+                if let Err(e) = begin(
                     schedule_app.clone(),
                     schedule_state.clone(),
                     current,
                     "Scheduled",
-                );
+                ) {
+                    push_log(
+                        &schedule_state,
+                        "Scheduled",
+                        "warn",
+                        format!("Skipped: {e}"),
+                    );
+                    emit(&schedule_app);
+                }
             }
         }
     });
@@ -775,8 +808,8 @@ fn show_and_clean(a: &AppHandle) {
         let _ = begin(a.clone(), shared, settings, "Hotkey");
     }
 }
-fn register_hotkey(a: &AppHandle, key: &str) -> Result<(), String> {
-    let accelerator = match key {
+fn accelerator_for(key: &str) -> Result<&'static str, String> {
+    Ok(match key {
         "ctrl+alt+KeyR" => "Ctrl+Alt+R",
         "ctrl+alt+KeyM" => "Ctrl+Alt+M",
         "ctrl+shift+KeyR" => "Ctrl+Shift+R",
@@ -784,10 +817,26 @@ fn register_hotkey(a: &AppHandle, key: &str) -> Result<(), String> {
         "alt+KeyR" => "Alt+R",
         "alt+KeyM" => "Alt+M",
         _ => return Err("Unsupported hotkey".into()),
+    })
+}
+/// Plain-language reason for a failed registration; the raw error only goes to ramopt.log.
+fn hotkey_problem(key: &str, error: &str, restored: bool) -> String {
+    backend::log(format!("Hotkey {key} registration failed: {error}"));
+    let label = accelerator_for(key).unwrap_or("Hotkey").replace('+', " + ");
+    let label = if restored {
+        format!("Default hotkey {label}")
+    } else {
+        label
     };
-    a.global_shortcut()
-        .unregister_all()
-        .map_err(|e| e.to_string())?;
+    if error.contains("already registered") {
+        format!("{label} is in use by another program")
+    } else {
+        format!("{label} could not be registered")
+    }
+}
+/// Registers `key` and only then releases `old`, so a hotkey that fails to register leaves the working one in place.
+fn register_hotkey(a: &AppHandle, key: &str, old: Option<&str>) -> Result<(), String> {
+    let accelerator = accelerator_for(key)?;
     let app = a.clone();
     a.global_shortcut()
         .on_shortcut(accelerator, move |_, _, event| {
@@ -795,7 +844,11 @@ fn register_hotkey(a: &AppHandle, key: &str) -> Result<(), String> {
                 show_and_clean(&app);
             }
         })
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    if let Some(old) = old.and_then(|key| accelerator_for(key).ok()) {
+        let _ = a.global_shortcut().unregister(old);
+    }
+    Ok(())
 }
 fn hotkey_worker(a: &AppHandle) {
     let state = Arc::clone(a.state::<Arc<RuntimeState>>().inner());
@@ -811,27 +864,73 @@ fn hotkey_worker(a: &AppHandle) {
             let retry_due =
                 failed_for != desired || retry_after.is_none_or(|at| Instant::now() >= at);
             if previous != desired && retry_due {
-                match register_hotkey(&app, &desired) {
+                let old = Some(previous.as_str()).filter(|key| !key.is_empty());
+                let restored = state.hotkey_restored.swap(false, Ordering::AcqRel);
+                match register_hotkey(&app, &desired, old) {
                     Ok(()) => {
+                        // Replaces the stale "not active, retrying" row once a key finally works.
+                        if state.hotkey_failed.swap(false, Ordering::AcqRel) {
+                            let label = accelerator_for(&desired)
+                                .unwrap_or_default()
+                                .replace('+', " + ");
+                            push_log(&state, "Hotkey", "info", format!("{label} is now active"));
+                        }
                         previous = desired;
+                        emit(&app);
                         last_error.clear();
                         failed_for.clear();
                         retry_after = None;
                     }
+                    Err(e) if old.is_some() => {
+                        // `previous` is kept: the old hotkey is still registered and keeps working. The failed
+                        // choice is not left saved, or it would be the only one tried (and unusable) after a restart.
+                        let reverted = {
+                            let mut current = lock(&state.settings);
+                            (current.hotkey == desired).then(|| {
+                                current.hotkey = previous.clone();
+                                current.clone()
+                            })
+                        };
+                        if let Some(reverted) = reverted
+                            && let Err(error) = backend::save_settings(&reverted)
+                        {
+                            backend::log(format!("Hotkey revert not saved: {error}"));
+                        }
+                        let kept = accelerator_for(&previous)
+                            .unwrap_or_default()
+                            .replace('+', " + ");
+                        push_log(
+                            &state,
+                            "Hotkey",
+                            "error",
+                            format!(
+                                "{} · still using {kept}",
+                                hotkey_problem(&desired, &e, restored)
+                            ),
+                        );
+                        emit(&app);
+                        failed_for.clear();
+                        last_error.clear();
+                        retry_after = None;
+                    }
                     Err(e) => {
-                        previous.clear();
                         failed_for = desired;
                         retry_after = Some(Instant::now() + HOTKEY_RETRY_INTERVAL);
-                        // Another process may own the hotkey; report it once instead of every retry.
-                        if e != last_error {
+                        // Nothing is registered yet (startup) and another process may own the hotkey; keep the
+                        // saved choice, report it once instead of every retry.
+                        let newly_inactive = !state.hotkey_failed.swap(true, Ordering::AcqRel);
+                        if newly_inactive || e != last_error {
                             push_log(
                                 &state,
                                 "Hotkey",
                                 "error",
-                                format!("Shortcut unavailable: {e}"),
+                                format!(
+                                    "{} · hotkey not active, retrying",
+                                    hotkey_problem(&failed_for, &e, restored)
+                                ),
                             );
-                            emit(&app);
                             last_error = e;
+                            emit(&app);
                         }
                     }
                 }
@@ -844,7 +943,7 @@ fn hotkey_worker(a: &AppHandle) {
 pub fn run() {
     let state = Arc::new(RuntimeState::new(backend::load_settings()));
     let autostart = tauri_plugin_autostart::Builder::new()
-        .app_name("RAMOpt")
+        .app_name(STARTUP_TASK)
         .build();
     let shortcuts = tauri_plugin_global_shortcut::Builder::new().build();
     let app = tauri::Builder::default()
@@ -893,7 +992,6 @@ pub fn run() {
             save_settings,
             restore_defaults,
             clean_now,
-            hide_window,
             install_update
         ])
         .build(tauri::generate_context!())

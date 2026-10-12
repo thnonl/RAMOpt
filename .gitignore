@@ -1,4 +1,5 @@
 /target/
+/target-uitest/
 /release/
 /settings.json
 build-output.txt

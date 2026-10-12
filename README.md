@@ -18,9 +18,9 @@ During cleanup, RAMOpt runs three backend optimization phases:
 - **Phase 2:** trims system file cache, flushes modified pages, and purges the standby list.
 - **Phase 3:** combines physical pages, reconciles the registry cache, and flushes modified file cache on fixed volumes.
 - Each memory area runs independently; failures are logged and later areas still run.
-- Optionally removes stale regular files older than 24 hours from current user's `%TEMP%`; directories and symbolic links are skipped.
+- Optionally removes stale regular files older than 24 hours from current user's `%TEMP%` and `C:\Windows\Temp` (files that cannot be accessed are skipped); directories and symbolic links are skipped.
 - Optionally closes selected user applications gracefully and force-cleans only narrowly identified orphan helper processes. Hardware drivers, security processes, network processes, active application trees, and running service-owned processes are excluded.
-- Reports estimated physical-memory delta, successful/skipped area counts, and orphan-process cleanup count. The delta is system-wide and can include normal Windows workload changes.
+- Reports estimated physical-memory delta, successful/skipped area counts, removed temp-file count, closed-app count, and orphan-process cleanup count. The delta is system-wide and can include normal Windows workload changes.
 
 Cleanup runs on demand, on configured schedule, or from global hotkey. Tray menu can show the app, open App settings, run cleanup, toggle scheduled cleanup, temp cleanup, background-app cleanup, Windows startup, or exit.
 
@@ -28,18 +28,18 @@ Cleanup runs on demand, on configured schedule, or from global hotkey. Tray menu
 
 ![RAMOpt main window](docs/ramopt-main-window.png)
 
-1. **Automatic cleanup** offers one mode at a time: **Off**, **Scheduled** (cleans every 1–1440 minutes) or **RAM high** (checks every minute and cleans while usage is at or above the threshold, 1–100%, default 75%). Only the settings of the selected mode are shown, and the window keeps the same height in every mode.
+1. **Automatic cleanup** offers one mode at a time: **Off**, **Scheduled** (cleans every 1–1440 minutes; changing the interval restarts the timer without cleaning) or **RAM high** (checks every minute and cleans while usage is at or above the threshold, 1–100%, default 75%). Only the settings of the selected mode are shown, and the window keeps the same height in every mode.
 2. **Clean temp files** removes stale files from the user temp folder and also attempts `C:\Windows\Temp`; files RAMOpt cannot access are skipped.
 3. **Close background apps** is disabled by default. It sends graceful close requests to matching processes in the current user session, including OneDrive, Teams, and Adobe helper apps. It force-cleans only stale, parentless, childless, network-idle helper processes that match exact allowlisted paths and command lines. It skips active application trees, running service-owned processes, hardware drivers, security/network processes, and ambiguous processes.
-4. **Quick-clean hotkey** (default **Ctrl + Alt + R**) runs a cleanup from any app while RAMOpt is running, including when it is hidden in the tray. If another program already owns the hotkey, RAMOpt reports it once and retries every 10 seconds.
+4. **Quick-clean hotkey** (default **Ctrl + Alt + R**) runs a cleanup from any app while RAMOpt is running, including when it is hidden in the tray; the RAMOpt window is brought to the front when the hotkey is pressed. If you pick a hotkey that cannot be registered, the previously working one stays active and stays saved (the selection returns to it), and the failure is shown in **Recent activity** (for example "Ctrl + Alt + R is in use by another program · still using Ctrl + Shift + M"). If the saved hotkey cannot be registered at startup because another program owns it, RAMOpt reports it once, marks the hotkey row **Not active (key in use)** and retries every 10 seconds; the selector keeps showing the saved key.
 5. Click the gear icon in the header, or choose **App settings…** from the tray menu, to open **App settings**: **Start with Windows**, **Close to tray** (hides the window instead of exiting) and **Dark mode**.
 
    ![RAMOpt app settings](docs/ramopt-app-settings.png)
 
-6. Click **Clean RAM now** for immediate cleanup. **Recent activity** shows the current status and the latest cleanup result. **Restore defaults** resets all settings.
-7. RAMOpt checks GitHub Releases hourly. When a newer release exists, an **Update available** banner appears (the tray menu enables **Update now**). **Install update** downloads the release archive, verifies its SHA-256 checksum, replaces the app files and restarts RAMOpt.
+6. Click **Clean RAM now** for immediate cleanup. **Recent activity** shows the current status and the latest cleanup result. **Restore defaults** resets all settings; if the default hotkey (Ctrl + Alt + R) is in use by another program, the hotkey that was working stays active and stays saved, and **Recent activity** says so (for example "Default hotkey Ctrl + Alt + R is in use by another program · still using Alt + M"). Once a hotkey that was not active registers successfully, **Recent activity** shows "Alt + M is now active".
+7. RAMOpt checks GitHub Releases every 15 minutes. When a newer release exists, an **Update available** banner appears and **Update now** is added to the tray menu (it is not shown otherwise). **Install update** downloads the release archive, verifies its SHA-256 checksum, replaces the app files and restarts RAMOpt.
 
-The window has a fixed width and cannot be resized or maximized; its height adapts only when the update banner appears.
+The window has a fixed width and cannot be resized or maximized; its height adapts only when the update banner appears (**Recent activity** always reserves room for three rows).
 
 ## What it does not do
 

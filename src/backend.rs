@@ -73,10 +73,23 @@ fn app_directory() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// True only in the opt-in UI-test build (`RAMOPT_UI_TEST=1` at compile time, see agent/ui-test-build.md). It keeps
+/// that build's settings, log and startup task apart from an installed RAMOpt.
+pub const UI_TEST_BUILD: bool = match option_env!("RAMOPT_UI_TEST") {
+    Some(value) => value.len() == 1 && value.as_bytes()[0] == b'1',
+    None => false,
+};
+
 fn data_directory() -> PathBuf {
     std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
-        .map(|path| path.join("RAMOpt"))
+        .map(|path| {
+            path.join(if UI_TEST_BUILD {
+                "RAMOpt-uitest"
+            } else {
+                "RAMOpt"
+            })
+        })
         .unwrap_or_else(app_directory)
 }
 
@@ -219,9 +232,21 @@ fn clear_temp_folder(folder: &Path) -> u64 {
         .count() as u64
 }
 
+// Clears the user temp folder and also attempts the system one; files that cannot be opened are skipped.
 fn clear_temp() -> u64 {
-    let temp = std::env::temp_dir();
-    clear_temp_folder(&temp)
+    let user_temp = std::env::temp_dir();
+    let system_temp = std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
+        .join("Temp");
+    let mut removed = clear_temp_folder(&user_temp);
+    if !system_temp
+        .as_os_str()
+        .eq_ignore_ascii_case(user_temp.as_os_str())
+    {
+        removed += clear_temp_folder(&system_temp);
+    }
+    removed
 }
 
 fn system_binary(name: &str) -> PathBuf {
@@ -623,7 +648,16 @@ struct MemoryOptimizationReport {
     measurement_available: bool,
     attempted_areas: u32,
     successful_areas: u32,
+    /// Skipped areas whose only errors are a missing privilege or access denied (a non-elevated run).
+    access_denied_areas: u32,
     failed_areas: Vec<String>,
+}
+
+/// True when every error in `error` (joined with "; ") is a missing privilege or Win32 ERROR_ACCESS_DENIED.
+fn is_access_error(error: &str) -> bool {
+    error
+        .split("; ")
+        .all(|part| part.ends_with("privilege not assigned") || part.ends_with("(Win32 error 5)"))
 }
 
 fn run_memory_area<F>(report: &mut MemoryOptimizationReport, name: &str, optimize: F)
@@ -641,6 +675,9 @@ where
             ));
         }
         Err(error) => {
+            if is_access_error(&error) {
+                report.access_denied_areas += 1;
+            }
             report.failed_areas.push(format!("{name}: {error}"));
             log(format!(
                 "Memory area {name}: skipped after {:.0} ms: {error}",
@@ -1054,9 +1091,7 @@ pub struct CleanSummary {
 
 pub fn clean_memory(settings: &Settings) -> CleanSummary {
     let report = optimize_memory();
-    if settings.clean_temp {
-        clear_temp();
-    }
+    let temp_removed = if settings.clean_temp { clear_temp() } else { 0 };
     let (closed, terminated, app_cleanup_error) = if settings.trim_background_apps {
         match close_background_apps() {
             Ok((closed, terminated)) => (closed, terminated, None),
@@ -1069,15 +1104,27 @@ pub fn clean_memory(settings: &Settings) -> CleanSummary {
     parts.push(if !report.measurement_available {
         "Cleaned, result not measurable".to_string()
     } else if report.freed_mb >= 1.0 {
-        format!("Freed {:.0} MB", report.freed_mb)
+        format!("Estimated {:.0} MB freed", report.freed_mb)
     } else {
         "Cleaned, no RAM change".to_string()
     });
     if report.successful_areas < report.attempted_areas {
+        let skipped = report.attempted_areas - report.successful_areas;
+        // Only named when every skip has that cause, so a mixed result is never mislabelled.
+        let reason = if report.access_denied_areas == skipped {
+            " (needs administrator)"
+        } else {
+            ""
+        };
         parts.push(format!(
-            "{} of {} areas skipped",
-            report.attempted_areas - report.successful_areas,
+            "{skipped} of {} areas skipped{reason}",
             report.attempted_areas
+        ));
+    }
+    if temp_removed > 0 {
+        parts.push(format!(
+            "{temp_removed} temp file{} removed",
+            plural(temp_removed)
         ));
     }
     if closed > 0 {
@@ -1156,6 +1203,22 @@ mod tests {
             assert_eq!(size_of::<SystemFileCacheInformation>(), 36);
             assert_eq!(size_of::<MemoryCombineInformationEx>(), 12);
         }
+    }
+
+    #[test]
+    fn access_errors_are_recognised_only_when_all_parts_match() {
+        assert!(is_access_error(
+            "AdjustTokenPrivileges(SeIncreaseQuotaPrivilege) failed: privilege not assigned"
+        ));
+        assert!(is_access_error(
+            "CreateFileW(C:) failed (Win32 error 5); CreateFileW(D:) failed (Win32 error 5)"
+        ));
+        assert!(!is_access_error(
+            "CreateFileW(C:) failed (Win32 error 5); FlushFileBuffers(C:) timed out after 30 seconds"
+        ));
+        assert!(!is_access_error(
+            "NtSetSystemInformation failed (NTSTATUS 0xC0000022)"
+        ));
     }
 
     #[test]

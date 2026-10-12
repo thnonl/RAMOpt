@@ -14,7 +14,6 @@
     "allow-save-settings",
     "allow-restore-defaults",
     "allow-clean-now",
-    "allow-hide-window",
     "allow-install-update"
   ]
 }

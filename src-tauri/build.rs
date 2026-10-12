@@ -1,10 +1,17 @@
 fn main() {
+    // Opt-in UI-test build (see agent/ui-test-build.md): runs non-elevated so UAC cannot block automated UI testing.
+    println!("cargo:rerun-if-env-changed=RAMOPT_UI_TEST");
+    let level = if std::env::var("RAMOPT_UI_TEST").is_ok_and(|v| v == "1") {
+        "asInvoker"
+    } else {
+        "requireAdministrator"
+    };
     println!("cargo:rustc-env=RAMOPT_TAURI_BUILD=1");
     println!("cargo:rustc-env=RAMOPT_TAURI_HOST=1");
     #[cfg(windows)]
     let windows = tauri_build::WindowsAttributes::new()
         .window_icon_path("../assets/ramopt.ico")
-        .app_manifest(
+        .app_manifest(format!(
             r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <dependency>
@@ -15,18 +22,17 @@ fn main() {
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
     <security>
       <requestedPrivileges>
-        <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
+        <requestedExecutionLevel level="{level}" uiAccess="false" />
       </requestedPrivileges>
     </security>
   </trustInfo>
 </assembly>"#,
-        );
+        ));
     let app_manifest = tauri_build::AppManifest::new().commands(&[
         "get_app_state",
         "save_settings",
         "restore_defaults",
         "clean_now",
-        "hide_window",
         "install_update",
     ]);
     let attrs = tauri_build::Attributes::new().app_manifest(app_manifest);
