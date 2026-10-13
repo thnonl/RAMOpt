@@ -111,6 +111,7 @@ const STARTUP_ENABLE_SCRIPT: &str = "$ErrorActionPreference='Stop';\
 $user=[Security.Principal.WindowsIdentity]::GetCurrent().Name;\
 $action=New-ScheduledTaskAction -Execute $env:RAMOPT_EXE -WorkingDirectory (Split-Path $env:RAMOPT_EXE);\
 $trigger=New-ScheduledTaskTrigger -AtLogOn -User $user;\
+$trigger.Delay='PT20S';\
 $principal=New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest;\
 $settings=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew;\
 Register-ScheduledTask -TaskName $env:RAMOPT_TASK -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null";
@@ -941,6 +942,8 @@ fn hotkey_worker(a: &AppHandle) {
     });
 }
 pub fn run() {
+    // panic = "abort" turns any panic into a silent 0xc0000409 crash; keep the message.
+    std::panic::set_hook(Box::new(|info| backend::log(format!("Panic: {info}"))));
     let state = Arc::new(RuntimeState::new(backend::load_settings()));
     let autostart = tauri_plugin_autostart::Builder::new()
         .app_name(STARTUP_TASK)
@@ -956,7 +959,10 @@ pub fn run() {
                 app.handle().clone(),
                 lock(&state.settings).start_with_windows,
             );
-            setup_tray(app)?;
+            // At early logon the shell may not be ready; a missing tray must not abort startup.
+            if let Err(e) = setup_tray(app) {
+                backend::log(format!("Tray setup failed: {e}"));
+            }
             let handle = app.handle().clone();
             workers(handle.clone(), state.clone());
             hotkey_worker(&handle);
